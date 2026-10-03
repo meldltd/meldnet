@@ -1,0 +1,10 @@
+*
+!bin/
+!bin/linux-amd64/
+!bin/linux-amd64/meldnet
+!bin/linux-amd64/meldnetd
+!bin/linux-arm64/
+!bin/linux-arm64/meldnet
+!bin/linux-arm64/meldnetd
+!scripts/
+!scripts/integration.Dockerfile

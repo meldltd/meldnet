@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Isolated Linux test: clients have no shared underlay, only the primary joins both.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+suffix="$$"
+primary="meldnet-primary-$suffix"
+a="meldnet-a-$suffix"
+b="meldnet-b-$suffix"
+neta="meldnet-a-net-$suffix"
+netb="meldnet-b-net-$suffix"
+cleanup() {
+ result=$?
+ if [ "$result" -ne 0 ]; then
+  for node in "$primary" "$a" "$b"; do docker logs "$node" 2>/dev/null || true; docker exec "$node" meldnet peers 2>/dev/null || true; done
+ fi
+ docker rm -f "$primary" "$a" "$b" >/dev/null 2>&1 || true
+ docker network rm "$neta" "$netb" >/dev/null 2>&1 || true
+ exit "$result"
+}
+trap cleanup EXIT
+arch="$(docker info --format '{{.Architecture}}')"
+case "$arch" in aarch64|arm64) arch=arm64;; x86_64|amd64) arch=amd64;; *) exit 1;; esac
+docker build --build-arg "TARGETARCH=$arch" -f scripts/integration.Dockerfile -t meldnet-integration:local . >/dev/null
+docker network create --internal "$neta" >/dev/null
+docker network create --internal "$netb" >/dev/null
+# Keep namespaces and private state across daemon process crashes.
+docker run -d --name "$primary" --sysctl net.ipv4.ip_forward=0 --network "$neta" --network-alias primary --cap-add NET_ADMIN --device /dev/net/tun --entrypoint sh meldnet-integration:local -c 'umask 077; PATH=/no-tools /usr/local/bin/meldnetd --primary --public-url https://primary:8443 --endpoint primary:51820 & echo $! >/run/meldnet.pid; exec sleep infinity' >/dev/null
+docker network connect --alias primary "$netb" "$primary"
+for pair in "$a:$neta" "$b:$netb"; do
+ node="${pair%%:*}"; network="${pair#*:}"
+ docker run -d --name "$node" --network "$network" --cap-add NET_ADMIN --device /dev/net/tun --entrypoint sh meldnet-integration:local -c 'umask 077; PATH=/no-tools /usr/local/bin/meldnetd & echo $! >/run/meldnet.pid; exec sleep infinity' >/dev/null
+done
+ready() { for attempt in $(seq 1 40); do if docker exec "$1" meldnet status >/dev/null 2>&1; then return; fi; sleep 0.2; done; return 1; }
+for node in "$primary" "$a" "$b"; do ready "$node"; done
+for pair in "$a:laptop" "$b:server"; do
+ node="${pair%%:*}"; name="${pair#*:}"
+ key="$(docker exec "$primary" meldnet invite)"
+ printf '%s' "$key" | docker exec -i "$node" meldnet join --name "$name" --key-file -
+done
+unset key
+ping_until() {
+ for attempt in $(seq 1 45); do if docker exec "$1" ping -c 1 -W 1 "$2" >/dev/null 2>&1; then return; fi; sleep 0.2; done
+ echo "VPN ping failed from $1 to $2";return 1
+}
+ping_until "$a" 10.77.0.3
+ping_until "$b" 10.77.0.2
+ping_until "$a" 10.77.0.1
+# Host forwarding is disabled; only the embedded relay can carry this traffic.
+docker exec "$primary" sh -c 'test "$(cat /proc/sys/net/ipv4/ip_forward)" = 0'
+ping_until "$a" 10.77.0.3
+for node in "$a" "$b"; do
+ docker exec "$node" sh -c 'meldnet peers | jq -e '\''.role == "client" and (.members | length) == 3'\'' >/dev/null'
+ docker exec "$node" sh -c 'meldnet status | jq -e '\''.backend == "wireguard" and .tunnel.up and (.tunnel.peers[0].last_handshake != null)'\'' >/dev/null'
+done
+oldkey="$(docker exec "$a" meldnet key)"
+for node in "$primary" "$a"; do
+ docker exec "$node" sh -c 'kill -KILL "$(cat /run/meldnet.pid)"'
+ docker exec -d "$node" sh -c 'echo $$ >/run/meldnet.pid; PATH=/no-tools exec /usr/local/bin/meldnetd'
+ ready "$node"
+done
+ping_until "$a" 10.77.0.3
+ping_until "$b" 10.77.0.2
+test "$oldkey" = "$(docker exec "$a" meldnet key)"
+docker exec "$primary" meldnet revoke laptop
+for attempt in $(seq 1 30); do
+ if docker exec "$a" sh -c 'meldnet status | jq -e '\''.tunnel.up == false'\'' >/dev/null'; then break; fi
+ sleep 0.5
+done
+docker exec "$a" sh -c 'meldnet status | jq -e '\''.tunnel.up == false'\'' >/dev/null'
+if docker exec "$b" ping -c 1 -W 2 10.77.0.2 >/dev/null 2>&1; then echo 'Revoked client remains reachable';exit 1; fi
+ping_until "$b" 10.77.0.1
+echo 'PASS: primary enrollment, automatic IPs, discovery, encrypted relay, daemon restart, and revocation'

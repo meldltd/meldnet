@@ -1,0 +1,16 @@
+[Unit]
+Description=Meldnet WireGuard service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/libexec/meldnetd --allow-uid @UID@
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=75
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

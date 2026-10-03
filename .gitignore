@@ -1,0 +1,5 @@
+/bin/
+/.demo/
+/coverage.out
+*.test
+.DS_Store
