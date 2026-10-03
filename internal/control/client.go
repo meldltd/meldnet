@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"meldnet/internal/config"
+	"meldnet/internal/privatedns"
 	"net/http"
 	"net/netip"
 )
@@ -117,6 +118,17 @@ func (m *Manager) syncClient(ctx context.Context) error {
 		}
 		m.state = next
 	}
+	dnsSettings := privatedns.Settings{}
+	if r.DNS != nil {
+		if r.DNS.Domain != privatedns.Domain || r.DNS.Server != r.Primary.IP {
+			return errors.New("invalid private DNS settings from primary")
+		}
+		dnsSettings = privatedns.Settings{Server: r.DNS.Server, Pool: r.Pool, Records: dnsRecords(r.Members)}
+	}
+	if e = m.svc.ConfigureDNS(dnsSettings); e != nil {
+		return e
+	}
+	m.network.DNS = r.DNS
 	m.network.Members = r.Members
 	_, e = m.svc.Reconcile(ctx, settings, false)
 	return e

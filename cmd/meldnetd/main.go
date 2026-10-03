@@ -16,6 +16,7 @@ import (
 	"meldnet/internal/api"
 	"meldnet/internal/config"
 	"meldnet/internal/control"
+	"meldnet/internal/privatedns"
 	"meldnet/internal/securefs"
 	"meldnet/internal/service"
 	"meldnet/internal/vpn"
@@ -84,6 +85,13 @@ func run() error {
 	svc, err := service.New(store, engine)
 	if err != nil {
 		return err
+	}
+	if !*simulate {
+		dns, e := privatedns.New(absolute)
+		if e != nil {
+			return fmt.Errorf("recover private DNS: %w", e)
+		}
+		svc.SetDNS(dns)
 	}
 	var options *control.Options
 	if *primary {

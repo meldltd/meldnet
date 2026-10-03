@@ -472,6 +472,9 @@ func (m Model) View() tea.View {
 		}
 		b.WriteString("\n" + muted.Render("c connect  d disconnect  s settings  a add  e edit  x remove") + "\n" + muted.Render("↑↓ select  r refresh  q quit (VPN stays running)") + "\n")
 	}
+	if m.status.DNS != nil && m.status.DNS.Error != "" {
+		b.WriteString("\n" + warning.Render("DNS: "+m.status.DNS.Error) + "\n")
+	}
 	if m.status.Error != "" {
 		b.WriteString("\n" + warning.Render(m.status.Error) + "\n")
 	}
@@ -523,7 +526,7 @@ func (m Model) peerCount() int {
 }
 func (m Model) writeNetwork(b *strings.Builder) {
 	b.WriteString(fmt.Sprintf("DEVICES (%d) · %s\n", len(m.network.Members), m.network.Role))
-	visible := max(1, m.height-16)
+	visible := max(1, m.height-18)
 	start := max(0, m.selected-visible+1)
 	end := min(len(m.network.Members), start+visible)
 	for i := start; i < end; i++ {
@@ -543,6 +546,9 @@ func (m Model) writeNetwork(b *strings.Builder) {
 	}
 	if len(m.network.Members) == 0 {
 		b.WriteString("Waiting for the primary to configure this device.\n")
+	}
+	if m.selected < len(m.network.Members) && m.network.Members[m.selected].Hostname != "" {
+		b.WriteString("\nDNS  " + m.network.Members[m.selected].Hostname + "\n")
 	}
 	b.WriteString("\nDevice activity reports control contact, not reachability.\n")
 	if m.network.Role == "primary" {

@@ -62,7 +62,7 @@ The protected local API additionally exposes:
 | POST | `/v1/network/join` | `{name,key}`; enroll and configure a fresh client |
 | DELETE | `/v1/network/members/{name}` | Primary only; revoke the device |
 
-Member entries contain `name`, `public_key`, `ip`, and `last_seen`. Last seen is
+Member entries contain `name`, `hostname`, `public_key`, `ip`, and `last_seen`. Last seen is
 control contact, not data-plane liveness. Never put enrollment keys in URLs or
 command arguments. CLI `join --key-file FILE` and the masked TUI input use the
 local socket request body. Manual configuration writes are refused for managed nodes.
@@ -75,3 +75,15 @@ They have no browser/CORS flow and require certificate pinning through the enrol
 key. Request bodies are bounded, connection/read/write times are bounded, and a
 per-source rate limiter applies. Raw credentials and WireGuard private keys never
 appear in server responses. Enrollment and TLS identities are separate from WireGuard.
+
+### Private DNS status
+
+`GET /v1/status` includes optional `dns`: `{domain,server,active,mode,error?}`.
+DNS activation is distinct from tunnel health; a DNS conflict leaves the VPN
+working by IP while `dns.active` is false and `dns.error` explains the problem.
+
+`GET /v1/network` includes optional `dns`: `{domain,server}` and each member's
+`hostname` (fully qualified, no trailing dot). The same DNS configuration travels
+in the primary's registration/network response. The initial domain is fixed at
+`meldnet.internal`; server is the primary's VPN IP. A missing DNS object preserves
+compatibility with older primaries. No credentials are added to these responses.

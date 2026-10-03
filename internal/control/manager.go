@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"meldnet/internal/config"
+	"meldnet/internal/privatedns"
 	"meldnet/internal/service"
 )
 
@@ -98,6 +99,7 @@ func (m *Manager) members() []Member {
 			members = append(members, d.Member)
 		}
 	}
+	assignHostnames(members)
 	return members
 }
 func (m *Manager) syncPrimary(ctx context.Context) error {
@@ -111,6 +113,11 @@ func (m *Manager) syncPrimary(ctx context.Context) error {
 			settings.Peers = append(settings.Peers, config.Peer{Name: d.Name, PublicKey: d.PublicKey, AllowedIPs: []string{d.IP + "/32"}})
 		}
 	}
+	members := m.members()
+	if e := m.svc.ConfigureDNS(privatedns.Settings{Primary: true, Server: p.IP, Pool: o.Pool, Records: dnsRecords(members)}); e != nil {
+		return e
+	}
+	m.network.DNS = &dnsConfig{Domain: privatedns.Domain, Server: p.IP}
 	_, e := m.svc.Reconcile(ctx, settings, true)
 	m.network.Members = m.members()
 	return e
@@ -185,5 +192,19 @@ func (m *Manager) Run(ctx context.Context) {
 	}
 }
 func (m *Manager) registration(d device) registration {
-	return registration{SettingsName: d.Name, IP: d.IP, Pool: m.state.Options.Pool, Primary: m.primary(), Endpoint: m.state.Options.Endpoint, Members: m.members()}
+	return registration{DNS: &dnsConfig{Domain: privatedns.Domain, Server: m.primary().IP}, SettingsName: d.Name, IP: d.IP, Pool: m.state.Options.Pool, Primary: m.primary(), Endpoint: m.state.Options.Endpoint, Members: m.members()}
+}
+
+func dnsRecords(members []Member) []privatedns.Record {
+	out := make([]privatedns.Record, 0, len(members))
+	for _, m := range members {
+		out = append(out, privatedns.Record{Name: m.Name, IP: m.IP, PublicKey: m.PublicKey})
+	}
+	return out
+}
+func assignHostnames(members []Member) {
+	names := privatedns.Hostnames(dnsRecords(members))
+	for i := range members {
+		members[i].Hostname = names[members[i].PublicKey]
+	}
 }

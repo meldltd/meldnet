@@ -22,16 +22,18 @@ import (
 
 type Options struct{ Listen, URL, Endpoint, Pool, Name string }
 type Member struct {
+	Hostname  string    `json:"hostname,omitempty"`
 	Name      string    `json:"name"`
 	PublicKey string    `json:"public_key"`
 	IP        string    `json:"ip"`
 	LastSeen  time.Time `json:"last_seen"`
 }
 type Network struct {
-	Pending bool     `json:"pending,omitempty"`
-	Role    string   `json:"role"`
-	Members []Member `json:"members"`
-	Error   string   `json:"error,omitempty"`
+	DNS     *dnsConfig `json:"dns,omitempty"`
+	Pending bool       `json:"pending,omitempty"`
+	Role    string     `json:"role"`
+	Members []Member   `json:"members"`
+	Error   string     `json:"error,omitempty"`
 }
 type enrollment struct {
 	URL    string `json:"url"`
@@ -47,13 +49,18 @@ type registerRequest struct {
 	PublicKey      string `json:"public_key"`
 	CredentialHash string `json:"credential_hash"`
 }
+type dnsConfig struct {
+	Domain string `json:"domain"`
+	Server string `json:"server"`
+}
 type registration struct {
-	SettingsName string   `json:"name"`
-	IP           string   `json:"ip"`
-	Pool         string   `json:"pool"`
-	Primary      Member   `json:"primary"`
-	Endpoint     string   `json:"endpoint"`
-	Members      []Member `json:"members"`
+	DNS          *dnsConfig `json:"dns,omitempty"`
+	SettingsName string     `json:"name"`
+	IP           string     `json:"ip"`
+	Pool         string     `json:"pool"`
+	Primary      Member     `json:"primary"`
+	Endpoint     string     `json:"endpoint"`
+	Members      []Member   `json:"members"`
 }
 type invite struct {
 	Hash           string

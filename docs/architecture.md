@@ -105,10 +105,63 @@ mode preserves its prior explicit-connect behavior. Revocation removes the prima
 peer immediately and clients stop after receiving HTTP 401. Control unavailability
 keeps existing tunnels running and appears as a synchronization error.
 
+## Private DNS
+
+`internal/privatedns` is independent of presentation. The controller derives DNS
+records from the enrolled registry and passes desired DNS settings to the service.
+The registration/network response carries an optional `{domain,server}` DNS object;
+older clients ignore it and newer clients leave DNS untouched for older primaries.
+No existing enrollment or persisted primary options change during upgrade.
+
+The primary binds authoritative UDP/TCP port 53 only on its VPN IP. Record snapshots
+are atomic and updated on membership changes. Only enrolled source addresses and
+the primary's own address may query it. The server provides A, PTR, SOA, and NS;
+existing names queried for unsupported types return NODATA and unknown names return
+NXDOMAIN. It refuses names outside the private zone and exact managed reverse pool.
+Positive TTL is 30 seconds and negative SOA TTL five seconds. It has no recursion,
+zone transfer, public listener, or external service dependency. Request concurrency,
+TCP query count/timeouts, and UDP response sizes are bounded.
+
+Hostnames normally lowercase the device name. Legacy invalid DNS labels and names
+that collide ignoring case receive public-key-derived aliases. The public directory
+is the source of truth for each final FQDN. No bare-name search domain is installed.
+
+DNS lifecycle follows service lifecycle: tunnel creation precedes resolver setup;
+resolver restoration precedes tunnel teardown. DNS activation failure is recorded
+separately in `status.dns` and shown in the TUI, preserving otherwise-working VPN
+connectivity. Cleanup errors propagate and the tunnel is still torn down. Paused
+nodes stay paused; idempotent reconciliation preserves active DNS services. Empty
+peer slices are normalized to avoid repeated reloads of a primary with no clients.
+
+macOS uses forward and reverse `/etc/resolver` files without touching global DNS.
+Linux uses resolved's D-Bus SetLinkDNS/SetLinkDomains/SetLinkDefaultRoute and RevertLink
+when `/etc/resolv.conf` points applications at 127.0.0.53 and the service is present.
+Only the Meldnet interface is configured; routing domains are private-only. DNSSEC
+and DNS-over-TLS are disabled for this unsigned, WireGuard-protected private link.
+Interface removal after a crash naturally removes resolved's link settings.
+
+Other Linux systems use a loopback-only proxy at 127.77.0.1:53. The proxy routes
+private queries exclusively to the primary and all others to original nameservers,
+with TCP fallback for truncated UDP replies. It preserves existing upstream flags
+and EDNS without duplicating OPT records. No query cache is added. Existing resolver
+search/options are retained while nameserver lines temporarily point to the proxy.
+After restoring the resolver file, the proxy keeps forwarding public queries for
+six seconds to accommodate applications caching the old resolver address. Private
+queries are disabled during this grace period; reconnect replaces the proxy.
+
+File changes are journaled in owner-only `dns-resolver.json` (and `dns-reverse.json`
+on macOS) before writing. Linux uses an in-place write to support bind-mounted
+resolv.conf, comparing expected content first. Recovery handles partial owned writes,
+restores originals/removes created files, and preserves external replacements.
+Modified files still containing the ownership marker retain the journal and produce
+an error. The daemon recovers before control-plane DNS resolution. A crashed Linux
+fallback proxy leaves ordinary DNS unavailable until daemon restart/recovery;
+service supervision is recommended. No host resolver changes occur in simulation.
+
 ## Next milestones
 
-Direct connectivity/NAT traversal, seamless peer reconciliation, DNS, network ACLs,
+Direct connectivity/NAT traversal, seamless peer reconciliation, network ACLs,
 certificate/credential rotation, IPv6 allocation, endpoint mobility, signed installers,
 and optional GUI/mobile frontends remain future work. Manual IPv4/IPv6 peers and
-full-tunnel routes still work independently. No exit-node, NAT, DNS, or kill-switch
+full-tunnel routes still work independently. No exit-node, NAT, or kill-switch
 provisioning is included.

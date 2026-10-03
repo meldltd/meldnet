@@ -6,7 +6,9 @@ require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.0.10
 	charm.land/lipgloss/v2 v2.0.6
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/gofiber/fiber/v3 v3.5.0
+	github.com/miekg/dns v1.1.73
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.48.0

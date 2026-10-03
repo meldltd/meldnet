@@ -36,10 +36,12 @@ func (s *Service) Reconcile(ctx context.Context, settings config.Settings, relay
 	if err := next.Validate(); err != nil {
 		return config.Public{}, err
 	}
+	settings.Peers = append([]config.Peer{}, settings.Peers...)
+	next.Settings = settings
 	changed := s.node == nil || !reflect.DeepEqual(s.node.Settings, settings)
 	if changed {
 		if s.node != nil {
-			if err := s.engine.Down(ctx, s.node); err != nil {
+			if err := s.down(ctx); err != nil {
 				return config.Public{}, err
 			}
 			next.Revision++
@@ -54,7 +56,7 @@ func (s *Service) Reconcile(ctx context.Context, settings config.Settings, relay
 		r.SetRelay(s.node, relay)
 	}
 	if !s.paused {
-		if err := s.engine.Up(ctx, s.node); err != nil {
+		if err := s.up(ctx); err != nil {
 			return config.Public{}, err
 		}
 	}

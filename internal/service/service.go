@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"meldnet/internal/config"
+	"meldnet/internal/privatedns"
 	"meldnet/internal/vpn"
 )
 
@@ -23,11 +24,12 @@ type Persistence interface {
 	Save(*config.Node) error
 }
 type Status struct {
-	Initialized bool           `json:"initialized"`
-	Backend     string         `json:"backend"`
-	Node        *config.Public `json:"node,omitempty"`
-	Tunnel      vpn.State      `json:"tunnel"`
-	Error       string         `json:"error,omitempty"`
+	DNS         *privatedns.Status `json:"dns,omitempty"`
+	Initialized bool               `json:"initialized"`
+	Backend     string             `json:"backend"`
+	Node        *config.Public     `json:"node,omitempty"`
+	Tunnel      vpn.State          `json:"tunnel"`
+	Error       string             `json:"error,omitempty"`
 }
 
 type Service struct {
@@ -35,6 +37,7 @@ type Service struct {
 	store   Persistence
 	engine  vpn.Engine
 	node    *config.Node
+	dns     DNSLifecycle
 	managed bool
 	paused  bool
 }
@@ -61,6 +64,12 @@ func (s *Service) Status(ctx context.Context) Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	status := Status{Backend: s.engine.Kind(), Tunnel: vpn.State{Peers: []vpn.PeerStatus{}}}
+	if s.dns != nil {
+		d := s.dns.Status()
+		if d.Domain != "" || d.Error != "" {
+			status.DNS = &d
+		}
+	}
 	if s.node == nil {
 		return status
 	}
@@ -139,7 +148,7 @@ func (s *Service) Connect(ctx context.Context) error {
 	// A client going away must not interrupt a half-applied network operation.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	return s.engine.Up(ctx, s.node)
+	return s.up(ctx)
 }
 
 func (s *Service) Disconnect(ctx context.Context) error {
@@ -151,5 +160,5 @@ func (s *Service) Disconnect(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	return s.engine.Down(ctx, s.node)
+	return s.down(ctx)
 }

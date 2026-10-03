@@ -19,6 +19,10 @@ known limitations. It is the durable checkpoint between sessions, not a transcri
   compiled Go libraries or built-in OS facilities. Keep CGO disabled for releases.
 - TUN interfaces are non-persistent. Preserve endpoint-route recovery journals
   until cleanup succeeds; never claim a userspace tunnel survives daemon death.
+- Private DNS must bind only the primary VPN address or a client loopback address.
+  Never forward private-zone misses to public resolvers. Journal host resolver
+  changes before writing, preserve external edits, and restore settings on down.
+  Tests must use temporary resolver paths or isolated containers, never host DNS.
 - Never report a simulated tunnel as a real connection or an interface being up
   as proof that a peer is reachable.
 

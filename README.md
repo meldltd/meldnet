@@ -5,7 +5,7 @@ The VPN lives in `meldnetd`; closing `meldnet` does not disconnect it. A future
 GUI can use the same versioned local API.
 
 **Current milestone:** a primary-managed WireGuard network with a Fiber HTTPS
-registration backend, automatic IP allocation, device discovery, and client-to-client
+registration backend, automatic IP allocation, private DNS, device discovery, and client-to-client
 communication through the primary. WireGuard is embedded; manual peer configuration
 and a clearly labeled simulation mode are also available.
 
@@ -126,7 +126,7 @@ private file, avoiding shell-history exposure:
 
 `--key-file -` reads stdin. The primary receives `.1`, and clients get stable
 addresses starting at `.2`. `meldnet peers` and the TUI list names and VPN IPs;
-use those IPs to reach other devices. Activity timestamps report control contact,
+use their private hostnames or IPs to reach other devices. Activity timestamps report control contact,
 not a successful WireGuard handshake. Host firewalls still govern local services.
 
 On the primary, `meldnet revoke laptop` removes the device's WireGuard peer and
@@ -148,10 +148,69 @@ Current managed-mode limits: IPv4 private pools /16 through /28, up to 128 lifet
 client registrations (smaller pools have fewer addresses), unique device names,
 no address/name reuse after revocation, and a brief primary tunnel reload when
 membership changes. Existing clients can take a WireGuard handshake retry to
-recover after a reload. DNS discovery, ACL groups, exit nodes, direct NAT traversal,
+recover after a reload. ACL groups, exit nodes, direct NAT traversal,
 and automatic endpoint refresh are not implemented. The self-signed primary TLS
 identity is valid for five years; certificate rotation needs an explicit future
 migration path. Back up the owner-only state directory securely.
+
+### Private DNS
+
+Managed nodes automatically get fully qualified names under **meldnet.internal**:
+
+```sh
+ping primary.meldnet.internal
+ping imac.meldnet.internal
+./bin/meldnet peers    # includes each device's hostname
+./bin/meldnet status   # includes DNS mode, active state, and any resolver error
+```
+
+Upgrade and restart both the primary and clients, keeping their existing state
+folders. No new enrollment keys or re-registration are needed. Upgrade the primary
+first; a new client talking to an older primary leaves DNS unchanged until the
+primary advertises DNS support.
+
+The primary serves authoritative A and PTR records on its VPN address, UDP and TCP
+port 53. It answers registered source addresses only and does not provide public
+DNS recursion. Records reflect the registry, including currently offline devices;
+revocation removes their records. Positive TTL is 30 seconds, negative TTL five
+seconds. Names are case-insensitive. Ordinary device names become
+`name.meldnet.internal`; legacy names containing dots/underscores or colliding
+ignoring case receive a deterministic `node-…` hostname shown in `meldnet peers`.
+Use the complete hostname; automatic short-name search suffixes are not installed.
+
+No public DNS record, certificate, extra DNS package, or Nginx configuration is
+needed. DNS travels inside WireGuard. A firewall on the primary must permit UDP
+and TCP port 53 **on the VPN interface**; do not publish DNS port 53 externally.
+A service already binding port 53 on all primary addresses may conflict; this
+appears in `status.dns.error` while the VPN remains usable by IP.
+
+Host integration:
+
+- **macOS:** creates domain-specific files in `/etc/resolver` for the private
+  domain and pool's reverse zone. Other DNS configuration is untouched. Use
+  `ping`, normal applications, or `dscacheutil -q host -a name imac.meldnet.internal`
+  to test system resolution. macOS `dig` bypasses split resolver selection; use
+  `dig @10.77.0.1 imac.meldnet.internal` for an explicit server test.
+- **Linux with systemd-resolved's stub:** configures only the Meldnet link through
+  D-Bus, using route-only private/reverse domains and disabling default-route DNS.
+  It does not change other interfaces' DNS settings.
+- **Other Linux setups:** starts an embedded proxy at `127.77.0.1:53` and journals
+  a temporary `/etc/resolv.conf` change. Private queries go only to the primary;
+  other queries go to the original nameservers. Search/options lines are preserved.
+  There is no new runtime executable or service dependency.
+
+Disconnect and graceful shutdown restore owned resolver settings. Startup recovers
+file-based settings left by a crash before reconnecting. External administrator
+changes are preserved; modified settings that still contain Meldnet's marker cause
+an explicit error with the recovery journal retained. If another network manager
+replaces the fallback resolver file while running, DNS drift is reported; disconnect
+and reconnect to configure against the new upstreams.
+
+On Linux's embedded-proxy fallback, killing the daemon can interrupt ordinary DNS
+until it is restarted and recovers `/etc/resolv.conf`. Keep the same state directory
+and run the daemon under a restarting service for unattended use. Applications
+using their own DNS-over-HTTPS servers may bypass private system DNS. Simulation
+never installs host DNS settings or starts a DNS listener.
 
 ### Manually connect two devices
 
@@ -183,7 +242,7 @@ Each routed IP family needs a local interface address. Existing routes are never
 replaced; conflicts fail and roll back the connection attempt.
 
 Only AllowedIPs prefixes create routes: an address such as `10.77.0.1/24` does not
-automatically route the entire subnet. This milestone does not provision gateway
+automatically route the entire subnet. Manual mode does not provision gateway
 forwarding, NAT, DNS, or kill-switch rules. Use host routes for the initial setup.
 Subnet/exit routing requires separate gateway administration.
 
@@ -254,12 +313,13 @@ make cross          # macOS + Linux, Intel + ARM
 make integration    # manual IPv4/IPv6 plus primary/two-client traffic in containers
 python3 scripts/smoke-tui.py  # actual terminal app, temporary simulated daemon
 python3 scripts/smoke-managed-tui.py  # masked enrollment and device directory
+./scripts/test-dns-linux.sh  # isolated Linux DNS and D-Bus protocol tests
 ```
 
 The integration test needs Docker with `/dev/net/tun` available. Its test image
 has no WireGuard packages and runs the daemon with an empty executable search
 path. Only test containers receive NET_ADMIN plus TUN access on an isolated
-internal bridge. Driver helpers such as jq are not application dependencies.
+internal bridge. Driver helpers such as jq, dig, and the test D-Bus daemon are not application dependencies.
 Tests cover UID authorization, key isolation, IPv4/IPv6 traffic, handshakes,
 counters, full-tunnel endpoint protection, rollback, crash recovery, identity
 persistence, reconnect, and teardown. It does not use host

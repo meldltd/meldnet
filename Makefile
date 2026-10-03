@@ -29,3 +29,4 @@ demo: build
 integration: cross
 	./scripts/integration-linux.sh
 	./scripts/integration-primary.sh
+	./scripts/test-dns-linux.sh
