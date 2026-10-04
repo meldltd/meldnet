@@ -1,4 +1,18 @@
-.PHONY: build test check cross demo integration
+.DEFAULT_GOAL := build
+
+.PHONY: build test check cross demo integration macos-app macos-test macos-installer macos-installer-test
+
+macos-installer:
+	./scripts/build-macos-installer.sh
+
+macos-installer-test: macos-installer
+	python3 scripts/test-macos-installer.py
+
+macos-app:
+	./scripts/build-macos-app.sh
+
+macos-test: macos-app
+	python3 scripts/test-macos-app.py
 
 build:
 	CGO_ENABLED=0 go build -trimpath -o bin/meldnet ./cmd/meldnet
@@ -29,4 +43,5 @@ demo: build
 integration: cross
 	./scripts/integration-linux.sh
 	./scripts/integration-primary.sh
+	./scripts/integration-multinetwork.sh
 	./scripts/test-dns-linux.sh

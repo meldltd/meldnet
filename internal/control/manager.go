@@ -208,3 +208,21 @@ func assignHostnames(members []Member) {
 		members[i].Hostname = names[members[i].PublicKey]
 	}
 }
+
+// Sync refreshes one profile without owning its startup policy.
+func (m *Manager) Sync(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var err error
+	if m.state.Options != nil {
+		err = m.syncPrimary(ctx)
+	} else if m.state.Client != nil {
+		err = m.syncClient(ctx)
+	}
+	if err != nil {
+		m.network.Error = err.Error()
+	} else {
+		m.network.Error = ""
+	}
+	return err
+}

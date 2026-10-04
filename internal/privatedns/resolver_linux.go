@@ -85,7 +85,7 @@ func (r *linuxResolver) Apply(ctx context.Context, iface, primary string, z *aut
 	// Only prefer resolved when applications actually use its stub. Systems with
 	// no resolved service need no new dependency: the embedded proxy is a fallback.
 	for _, ip := range up {
-		if ip == "127.0.0.53" {
+		if ip == "127.0.0.53" && primary != "127.0.0.1" {
 			bus, err := dbus.ConnectSystemBus()
 			if err == nil {
 				var owner bool

@@ -3,6 +3,7 @@ package vpn
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -47,7 +48,34 @@ type WireGuard struct {
 	relay   *config.Node
 }
 
+// NewWireGuard is the single-tunnel compatibility constructor.
 func NewWireGuard(dir string) (*WireGuard, error) {
+	owner, err := NewOwner()
+	if err != nil {
+		return nil, err
+	}
+	w, err := owner.NewWireGuard(dir, "default")
+	if err != nil {
+		owner.Close()
+		return nil, err
+	}
+	w.lock = owner.lock
+	return w, nil
+}
+
+// Owner holds the one process-wide networking lock while allowing independent
+// devices/journals inside that process. The daemon closes devices before Owner.
+type Owner struct{ lock *os.File }
+
+func NewOwner() (*Owner, error) {
+	lock, err := securefs.Lock("/var/run/meldnet-network.lock")
+	if err != nil {
+		return nil, err
+	}
+	return &Owner{lock: lock}, nil
+}
+func (o *Owner) Close() error { return o.lock.Close() }
+func (o *Owner) NewWireGuard(dir, id string) (*WireGuard, error) {
 	if err := securefs.Directory(dir); err != nil {
 		return nil, err
 	}
@@ -56,14 +84,14 @@ func NewWireGuard(dir string) (*WireGuard, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	// Prevent separate daemon state directories from competing for host routes.
-	lock, err := securefs.Lock("/var/run/meldnet-network.lock")
-	if err != nil {
-		return nil, err
-	}
 	var w *WireGuard
+	var err error
 	w, err = newWireGuard(dir, newNetwork(), func() (wireDevice, string, error) {
 		name := tunnelName()
+		if name != "utun" && id != "default" {
+			h := sha256.Sum256([]byte(id))
+			name = fmt.Sprintf("meldnet-%x", h[:3])
+		}
 		if name != "utun" {
 			interfaces, err := net.Interfaces()
 			if err != nil {
@@ -92,10 +120,8 @@ func NewWireGuard(dir string) (*WireGuard, error) {
 		return d, name, nil
 	})
 	if err != nil {
-		lock.Close()
 		return nil, err
 	}
-	w.lock = lock
 	return w, nil
 }
 
@@ -396,4 +422,10 @@ func renderIPC(n *config.Node, endpoints map[string]string) string {
 		}
 	}
 	return b.String()
+}
+
+func (w *WireGuard) RecoveryPending() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.pending) > 0
 }

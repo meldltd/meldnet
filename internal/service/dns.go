@@ -19,6 +19,9 @@ func (s *Service) SetDNS(d DNSLifecycle) { s.mu.Lock(); defer s.mu.Unlock(); s.d
 func (s *Service) ConfigureDNS(settings privatedns.Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if ranges, ok := s.engine.(interface{ SetPool(string) }); ok {
+		ranges.SetPool(settings.Pool)
+	}
 	if s.dns == nil {
 		return nil
 	}

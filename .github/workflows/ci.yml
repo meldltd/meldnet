@@ -16,6 +16,8 @@ jobs:
           cache: true
       - run: make check
       - run: make cross
+      - run: make macos-test macos-installer-test
+        if: runner.os == 'macOS'
   wireguard:
     runs-on: ubuntu-latest
     steps:

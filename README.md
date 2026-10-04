@@ -1,8 +1,8 @@
 # Meldnet
 
-A Go VPN service with a separate Bubble Tea terminal client for macOS and Linux.
-The VPN lives in `meldnetd`; closing `meldnet` does not disconnect it. A future
-GUI can use the same versioned local API.
+A Go VPN service with a separate Bubble Tea terminal client for macOS and Linux,
+and a native macOS menu bar app. The VPN lives in `meldnetd`; closing either
+frontend does not disconnect it. Both use the same versioned local API.
 
 **Current milestone:** a primary-managed WireGuard network with a Fiber HTTPS
 registration backend, automatic IP allocation, private DNS, device discovery, and client-to-client
@@ -28,6 +28,101 @@ are placed under `bin/{darwin,linux}-{amd64,arm64}/`. No C toolchain is required
 build the application binaries. Builds disable CGO; Linux binaries are static.
 A terminal of at least 64 columns × 24 rows is
 recommended.
+
+## macOS menu bar and automatic startup
+
+For the full VPN on macOS 13 or newer, with Apple's Command Line Tools installed:
+
+```sh
+./scripts/install-macos.sh
+```
+
+This installs `~/Applications/Meldnet.app`, starts its menu bar icon now, and
+registers it to open at login. Click a peer row to copy its complete private
+hostname. The list refreshes every three seconds and distinguishes recent VPN
+handshakes from recent control-server contact. Quitting the menu app leaves the
+VPN running. Each network has its own **Connect / Disconnect** and **Auto-connect
+at startup** controls. **Join Network…** accepts a local network name, device name
+and masked enrollment key, with separate connect-now and auto-connect choices.
+Joining another network preserves existing memberships and connections. Conflicting
+address ranges show a warning and cannot connect together.
+**Open TUI** opens the bundled terminal client in Terminal as your current user,
+using the same control socket.
+
+The installer requests your administrator password to install `meldnetd` for the
+**next boot**, preserving the currently running tunnel and existing default state.
+Networks marked for auto-connect reconnect after boot; other networks stay disconnected. Custom state/socket paths need matching service/app arguments; do
+not use this default installer for a daemon with custom paths.
+
+For just the menu app, use `./scripts/install-macos.sh --menu-only`. To build/test
+without installing anything, use `make macos-test`. Linux retains its TUI/CLI and
+systemd service; the menu bar app is macOS-only. See [service setup and removal](docs/services.md).
+
+## Build a macOS installer
+
+```sh
+make macos-installer
+```
+
+Produces `bin/Meldnet-0.1.0-universal.pkg` for Apple Silicon and Intel Macs
+(macOS 13+). Use `make macos-installer VERSION=0.2.0` to set a release version.
+Builds need Go and Apple's Command Line Tools; the resulting package needs no
+separate runtime installation. Building does not require sudo or install anything.
+
+Open the `.pkg` to install. macOS Installer requests administrator authorization,
+installs `/Applications/Meldnet.app` and a root-owned daemon, and loads the
+background service immediately. No reboot is required. Shut down any previous
+foreground daemon yourself before installing. The menu app opens in the authorized
+user's active desktop session, or on their next login. Boot/login startup remains enabled. Initial installation authorizes the active
+console account; upgrades preserve the existing authorized UID. Existing default
+VPN identity and enrollment data are preserved.
+
+The default package is for local development: code is ad-hoc signed and the
+installer is unsigned, not notarized. Developer ID signing is supported with
+`CODE_SIGN_IDENTITY` and `INSTALLER_SIGN_IDENTITY`; see [installer details](docs/services.md#macos-installer-package).
+Use `make macos-installer-test` to build and check the archive and permission
+scripts in a temporary filesystem without installing a service or changing host DNS.
+
+## Multiple networks
+
+Join each network under a local name (1–31 lowercase letters, digits or hyphens;
+start with a letter and end with a letter or digit). Keep enrollment keys in
+private files or provide them on stdin, never in arguments.
+
+```sh
+./bin/meldnet --network work join --name laptop --key-file /path/to/work-key
+./bin/meldnet --network home join --name laptop --key-file /path/to/home-key --auto-connect=false --connect=false
+./bin/meldnet networks
+./bin/meldnet --network home up
+./bin/meldnet --network work down
+./bin/meldnet --network home autoconnect on
+```
+
+Up to 16 profiles can be saved, including `default`. Each has separate keys,
+configuration, connection state and startup preference. Changing auto-connect
+does not change the current connection. Disconnect pauses that profile until
+explicitly connected again, or until a daemon restart if auto-connect is enabled.
+Existing enrollment becomes `default` without replacing its identity; its previous
+auto-start behavior is preserved. Commands without `--network` use `default`.
+
+The daemon rejects simultaneous equal **or overlapping** ranges, including
+subnets and IPv6 routes. The warning identifies the conflicting network and ranges.
+You can save conflicting memberships and switch between them. If a join succeeds
+but connecting conflicts, the membership remains saved. At startup, profiles are
+attempted in name order; a conflicting profile stays disconnected. Failed route
+cleanup also prevents conflicting connections until cleanup succeeds.
+
+In the TUI press **n** for networks; select a row, then **c** to connect, **d** to
+disconnect, **a** to toggle auto-connect, **Enter** for peers, or **+** to join another.
+The macOS menu provides the same choices under each network.
+
+Private hostnames include the local network name, for example
+`server.work.meldnet.internal`. Click a peer in the menu to copy its hostname.
+The old `server.meldnet.internal` alias works only when that name is unique among
+connected networks; ambiguous names return NXDOMAIN. These profile names are local
+to this computer. Private DNS uses a shared local listener at `127.0.0.1:53`;
+if another service owns it, the network reports a DNS error. Disconnecting one
+network removes only its records and preserves the others.
 
 ## Try the TUI without modifying networking
 
@@ -250,6 +345,7 @@ Subnet/exit routing requires separate gateway administration.
 
 | Key | Action |
 |---|---|
+| n | Open network list (c/d connection, a auto-start, + join, Enter peers) |
 | j | Join with an enrollment key (unconfigured/pending device) |
 | Enter / i | Initialize a manual configuration |
 | c / d | Connect / disconnect |
@@ -292,10 +388,11 @@ fails; scripts should check that field as well as `tunnel.up`.
 
 Templates and installation instructions are in [docs/services.md](docs/services.md).
 Installing a service is optional and is not done by `make build` or the TUI.
-Gracefully stopping the daemon tears down its tunnel. Manual nodes stay disconnected after startup; managed nodes automatically
-reconnect. A daemon crash closes the embedded tunnel too; the OS
-removes its non-persistent TUN and attached routes. Startup removes any surviving
-endpoint routes using its private `routes.json` journal before reconnecting managed nodes.
+Gracefully stopping the daemon tears down all its tunnels. Each profile reconnects
+after startup only if auto-connect is enabled. Legacy manual profiles default to
+off and legacy managed profiles to on. A daemon crash closes the embedded tunnels
+too; the OS removes their non-persistent TUNs and attached routes. Startup removes
+surviving endpoint routes using each profile’s private recovery journal.
 Keys/settings survive. Failed cleanup remains visible and can be retried with
 `meldnet down`.
 

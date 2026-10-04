@@ -12,6 +12,12 @@ import (
 	"net/netip"
 )
 
+func ValidateJoin(req JoinRequest) error {
+	if _, err := parseKey(req.Key); err != nil {
+		return err
+	}
+	return (config.Settings{Name: req.Name, Addresses: []string{"10.77.0.2/32"}}).Validate()
+}
 func (m *Manager) Join(ctx context.Context, req JoinRequest) error {
 	e, err := parseKey(req.Key)
 	if err != nil {
@@ -100,7 +106,7 @@ func (m *Manager) syncClient(ctx context.Context) error {
 	}
 	pool, e := netip.ParsePrefix(r.Pool)
 	ip, iperr := netip.ParseAddr(r.IP)
-	if e != nil || iperr != nil || !pool.Addr().IsPrivate() || !ip.Is4() || !pool.Contains(ip) || r.SettingsName != s.Name {
+	if e != nil || iperr != nil || !pool.Addr().Is4() || pool != pool.Masked() || pool.Bits() < 16 || pool.Bits() > 28 || !pool.Addr().IsPrivate() || !ip.Is4() || !pool.Contains(ip) || r.SettingsName != s.Name {
 		return errors.New("invalid assigned network")
 	}
 	settings := config.Settings{Name: s.Name, Addresses: []string{r.IP + "/32"}, Peers: []config.Peer{{Name: r.Primary.Name, PublicKey: r.Primary.PublicKey, Endpoint: r.Endpoint, AllowedIPs: []string{r.Pool}, Keepalive: 25}}}

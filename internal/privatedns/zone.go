@@ -23,6 +23,9 @@ type Record struct {
 	PublicKey string `json:"public_key"`
 }
 type Settings struct {
+	KnownPools []string            // retain private reverse-zone boundaries while another profile is active
+	Networks   map[string]Settings // local-only aggregate, never accepted over the control API
+
 	Server  string
 	Pool    string
 	Primary bool
@@ -85,11 +88,26 @@ type zone struct {
 	reverse   map[string]string
 	allowed   map[netip.Addr]bool
 	pool      netip.Prefix
+	pools     []netip.Prefix
 	ns        string
 }
 type authority struct{ current atomic.Pointer[zone] }
 
 func makeZone(s Settings) (*zone, error) {
+	if len(s.Networks) > 0 {
+		z, err := mergedZone(s.Networks)
+		if err != nil {
+			return nil, err
+		}
+		for _, raw := range s.KnownPools {
+			p, e := netip.ParsePrefix(raw)
+			if e != nil || !p.Addr().Is4() || !p.Addr().IsPrivate() || p != p.Masked() || p.Bits() < 16 || p.Bits() > 28 {
+				return nil, errors.New("invalid private DNS range")
+			}
+			z.pools = append(z.pools, p)
+		}
+		return z, nil
+	}
 	p, e := netip.ParsePrefix(s.Pool)
 	server, se := netip.ParseAddr(s.Server)
 	if e != nil || se != nil || !p.Addr().Is4() || !p.Addr().IsPrivate() || p != p.Masked() || p.Bits() < 16 || p.Bits() > 28 || !p.Contains(server) || server != p.Addr().Next() || len(s.Records) > 129 {
@@ -135,7 +153,15 @@ func (z *zone) private(name string) bool {
 		return false
 	}
 	ip, e := netip.ParseAddr(parts[3] + "." + parts[2] + "." + parts[1] + "." + parts[0])
-	return e == nil && z.pool.Contains(ip)
+	if e != nil {
+		return false
+	}
+	for _, pool := range z.networkPools() {
+		if pool.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 func (z *zone) soa() dns.RR {
 	return &dns.SOA{Hdr: dns.RR_Header{Name: Domain + ".", Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 5}, Ns: z.ns, Mbox: "hostmaster." + Domain + ".", Serial: 1, Refresh: 30, Retry: 5, Expire: 300, Minttl: 5}
@@ -195,7 +221,12 @@ func (a *authority) answer(w dns.ResponseWriter, q *dns.Msg) {
 	if len(m.Answer) == 0 {
 		soa := z.soa()
 		if strings.HasSuffix(name, ".in-addr.arpa.") {
-			soa.Header().Name = reverseDomain(z.pool) + "."
+			for _, p := range z.networkPools() {
+				if strings.HasSuffix(name, reverseDomain(p)+".") {
+					soa.Header().Name = reverseDomain(p) + "."
+					break
+				}
+			}
 		}
 		m.Ns = []dns.RR{soa}
 	}
@@ -237,4 +268,65 @@ func reverseDomain(p netip.Prefix) string {
 		reverse = append(reverse, parts[i])
 	}
 	return strings.Join(reverse, ".") + ".in-addr.arpa"
+}
+
+func (z *zone) networkPools() []netip.Prefix {
+	if len(z.pools) > 0 {
+		return z.pools
+	}
+	return []netip.Prefix{z.pool}
+}
+func (z *zone) reverseDomains() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range z.networkPools() {
+		d := reverseDomain(p)
+		if !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Names qualified by profile are always unique. Bare legacy names are retained
+// only when exactly one connected network advertises them; ambiguity is NXDOMAIN.
+func mergedZone(networks map[string]Settings) (*zone, error) {
+	z := &zone{addresses: map[string]netip.Addr{}, reverse: map[string]string{}, allowed: map[netip.Addr]bool{netip.MustParseAddr("127.0.0.1"): true}, ns: "localhost."}
+	bare := map[string][]netip.Addr{}
+	ids := []string{}
+	for id := range networks {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if !validLabel(id) {
+			return nil, errors.New("invalid DNS network ID")
+		}
+		part, err := makeZone(networks[id])
+		if err != nil {
+			return nil, err
+		}
+		z.pools = append(z.pools, part.pool)
+		for name, ip := range part.addresses {
+			qualified := strings.TrimSuffix(name, "."+Domain+".") + "." + id + "." + Domain + "."
+			z.addresses[qualified] = ip
+			bare[name] = append(bare[name], ip)
+			reverse, _ := dns.ReverseAddr(ip.String())
+			z.reverse[reverse] = qualified
+		}
+	}
+	if len(z.pools) == 0 {
+		return nil, errors.New("empty DNS networks")
+	}
+	z.pool = z.pools[0]
+	for name, ips := range bare {
+		if len(ips) == 1 {
+			z.addresses[name] = ips[0]
+			reverse, _ := dns.ReverseAddr(ips[0].String())
+			z.reverse[reverse] = name
+		}
+	}
+	return z, nil
 }

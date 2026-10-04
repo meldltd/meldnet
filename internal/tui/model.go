@@ -13,6 +13,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"meldnet/internal/config"
 	"meldnet/internal/control"
+	"meldnet/internal/profiles"
 	"meldnet/internal/service"
 )
 
@@ -28,12 +29,14 @@ type networkClient interface {
 	Join(context.Context, string, string) error
 }
 type networkMsg struct {
+	profile string
 	network control.Network
 	err     error
 }
 type statusMsg struct {
-	status service.Status
-	err    error
+	profile string
+	status  service.Status
+	err     error
 }
 type actionMsg struct {
 	err   error
@@ -42,34 +45,39 @@ type actionMsg struct {
 type tickMsg struct{}
 
 type Model struct {
-	client        Client
-	network       control.Network
-	status        service.Status
-	online        bool
-	loading       bool
-	busy          bool
-	width, height int
-	selected      int
-	message       string
-	form          string
-	fields        []textinput.Model
-	labels        []string
-	focus         int
-	draft         config.Settings
-	revision      uint64
-	editing       int
-	confirm       bool
+	profiles        []profiles.Profile
+	profilesPage    bool
+	profileSelected int
+	client          Client
+	network         control.Network
+	status          service.Status
+	online          bool
+	loading         bool
+	busy            bool
+	width, height   int
+	selected        int
+	message         string
+	form            string
+	fields          []textinput.Model
+	labels          []string
+	focus           int
+	draft           config.Settings
+	revision        uint64
+	editing         int
+	confirm         bool
 }
 
-func New(c Client) Model      { return Model{client: c, loading: true, width: 80, height: 24, editing: -1} }
-func (m Model) Init() tea.Cmd { return tea.Batch(m.fetch(), m.fetchNetwork(), tick()) }
-func tick() tea.Cmd           { return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return tickMsg{} }) }
+func New(c Client) Model { return Model{client: c, loading: true, width: 80, height: 24, editing: -1} }
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(m.fetch(), m.fetchNetwork(), m.fetchProfiles(), tick())
+}
+func tick() tea.Cmd { return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return tickMsg{} }) }
 func (m Model) fetch() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		s, err := m.client.Status(ctx)
-		return statusMsg{s, err}
+		return statusMsg{profile: m.profileID(), status: s, err: err}
 	}
 }
 
@@ -82,13 +90,21 @@ func (m Model) fetchNetwork() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		n, e := c.Network(ctx)
-		return networkMsg{n, e}
+		return networkMsg{profile: m.profileID(), network: n, err: e}
 	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case profilesMsg:
+		if msg.err == nil {
+			m.profiles = msg.profiles
+			m.profileSelected = min(m.profileSelected, max(0, len(m.profiles)-1))
+		}
 	case networkMsg:
+		if msg.profile != m.profileID() {
+			return m, nil
+		}
 		if msg.err == nil {
 			m.network = msg.network
 		} else if m.network.Role != "" {
@@ -100,6 +116,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fields[i].SetWidth(max(12, min(70, m.width-10)))
 		}
 	case statusMsg:
+		if msg.profile != m.profileID() {
+			return m, nil
+		}
 		m.loading = false
 		m.online = msg.err == nil
 		if msg.err != nil {
@@ -123,11 +142,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.loading = true
-		return m, tea.Batch(m.fetch(), m.fetchNetwork())
+		return m, tea.Batch(m.fetch(), m.fetchNetwork(), m.fetchProfiles())
 	case tickMsg:
 		if !m.busy && !m.loading {
 			m.loading = true
-			return m, tea.Batch(m.fetch(), m.fetchNetwork(), tick())
+			return m, tea.Batch(m.fetch(), m.fetchNetwork(), m.fetchProfiles(), tick())
 		}
 		return m, tick()
 	case tea.KeyPressMsg:
@@ -140,6 +159,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.form != "" {
 			return m.updateForm(msg)
+		}
+		if cmd, handled := m.profileKey(key); handled && key != "q" {
+			return m, cmd
 		}
 		if m.confirm {
 			m.confirm = false
@@ -157,7 +179,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.loading {
 				m.loading = true
 				m.message = ""
-				return m, tea.Batch(m.fetch(), m.fetchNetwork())
+				return m, tea.Batch(m.fetch(), m.fetchNetwork(), m.fetchProfiles())
 			}
 		}
 		if !m.online || m.loading {
@@ -322,6 +344,23 @@ func list(value string) []string {
 	return out
 }
 func (m *Model) saveForm() tea.Cmd {
+	if m.form == "join-profile" {
+		c := m.client.(profileClient)
+		auto := strings.ToLower(strings.TrimSpace(m.fields[3].Value()))
+		connect := strings.ToLower(strings.TrimSpace(m.fields[4].Value()))
+		if (auto != "yes" && auto != "no") || (connect != "yes" && connect != "no") {
+			m.message = "Use yes or no for startup and connect choices."
+			return nil
+		}
+		req := profiles.JoinRequest{ID: strings.TrimSpace(m.fields[0].Value()), Name: strings.TrimSpace(m.fields[1].Value()), Key: strings.TrimSpace(m.fields[2].Value()), AutoConnect: auto == "yes", Connect: connect == "yes"}
+		m.fields[2].SetValue("")
+		m.busy = true
+		return func() tea.Msg {
+			err := c.JoinNetwork(context.Background(), req)
+			return actionMsg{err: err, saved: err == nil}
+		}
+	}
+
 	value := func(i int) string { return strings.TrimSpace(m.fields[i].Value()) }
 	if m.form == "join" {
 		c, ok := m.client.(networkClient)
@@ -392,6 +431,9 @@ func (m Model) View() tea.View {
 	width := max(20, min(96, m.width-4))
 	var b strings.Builder
 	b.WriteString(accent.Render("MELDNET") + "  /  private network\n")
+	if c, ok := m.client.(profileClient); ok {
+		b.WriteString("Network: " + c.SelectedNetwork() + " · n manage networks\n")
+	}
 	if m.status.Backend == "simulation" {
 		b.WriteString(warning.Render("SIMULATION · no encrypted VPN traffic") + "\n")
 	}
@@ -401,6 +443,9 @@ func (m Model) View() tea.View {
 		b.WriteString("Resize terminal to at least 64 × 24.\nCtrl+C exits; the daemon keeps running.\n")
 	case m.form != "":
 		title := "Node settings"
+		if m.form == "join-profile" {
+			title = "Join another network"
+		}
 		if m.form == "join" {
 			title = "Join your network"
 		}
@@ -412,6 +457,8 @@ func (m Model) View() tea.View {
 			b.WriteString(m.labels[i] + "\n" + m.fields[i].View() + "\n")
 		}
 		b.WriteString("\n" + muted.Render("tab/↑↓ fields   enter next/save   ctrl+s save   esc cancel") + "\n")
+	case m.profilesPage:
+		b.WriteString(m.profilesView())
 	case !m.online:
 		if m.loading {
 			b.WriteString("Contacting daemon…\n")

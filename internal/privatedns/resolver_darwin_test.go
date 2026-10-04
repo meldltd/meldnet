@@ -33,3 +33,36 @@ func TestMacSplitResolverLifecycle(t *testing.T) {
 		t.Fatal("resolver files remain")
 	}
 }
+
+func TestMacMultipleReverseZonesAndRecovery(t *testing.T) {
+	dir := t.TempDir()
+	resolverDir := filepath.Join(dir, "resolver")
+	raw, err := newResolver(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := raw.(*macResolver)
+	r.directory = resolverDir
+	z, err := makeZone(Settings{Networks: map[string]Settings{"work": testSettings(), "home": secondSettings()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &authority{}
+	a.current.Store(z)
+	if err = r.Apply(context.Background(), "", "127.0.0.1", a); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{Domain, "0.77.10.in-addr.arpa", "0.88.10.in-addr.arpa"} {
+		if _, err = os.Stat(filepath.Join(resolverDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Simulated crash: recovery reads only journaled temporary test paths.
+	if _, err = newResolver(dir); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(resolverDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("recovery did not restore all resolver files")
+	}
+}

@@ -1,173 +1,146 @@
 # Meldnet handoff
 
-Updated: 2026-10-03
+Updated: 2026-10-04
 
-## Goal and current state
+## Current milestone
 
-Go VPN daemon independent of its Bubble Tea TUI/CLI, supporting macOS and Linux.
-Embedded wireguard-go and native OS networking require no separately installed
-VPN tools. The latest milestone adds automatic private DNS under
-`meldnet.internal`, with authoritative A/PTR records on the primary and reversible
-macOS/Linux resolver integration. Fiber registration, automatic enrollment/IP
-configuration, device discovery, and the primary relay remain independent of UI.
-Upgrade the primary and clients using their existing state; no re-enrollment is
-needed. Ordinary names become `primary.meldnet.internal`, `imac.meldnet.internal`.
+Independent multi-network profiles are implemented across the daemon, local API,
+CLI, Bubble Tea TUI and native macOS menu app. Multiple non-overlapping tunnels can
+run concurrently. Each profile persists a separate auto-connect preference;
+connection/disconnection does not change that preference. Equal and nested IPv4
+and IPv6 ranges are blocked atomically in the daemon, with actionable warnings.
+The latest universal installer is `bin/Meldnet-0.1.0-universal.pkg`.
 
-Implemented commands: `meldnetd --primary --public-url https://HOST:8443
---endpoint HOST:51820 [--listen :8443 --pool 10.77.0.0/24 --name primary]`,
-`meldnet invite`, `meldnet join --name NAME --key-file FILE` (or stdin),
-`meldnet peers`, and `meldnet revoke NAME`. Onboarding in the TUI uses `j` with
-masked enrollment input. Managed settings are read-only; c/d controls the tunnel.
-Manual peer setup remains available for independent use.
+## Durable architecture
 
-## Durable decisions
+- `meldnetd` alone owns private keys, enrollment, persistence, embedded wireguard-go,
+  TUNs, route recovery and DNS. No daemon subprocesses or presentation imports.
+  macOS and Linux releases retain CGO_ENABLED=0.
+- Unix HTTP v1 is protected by kernel peer credentials, a 0600 socket, allowed UID
+  and root, Host validation and Origin rejection. CLI/TUI/menu use only this API;
+  quitting a frontend leaves VPNs running. No keys in public responses or logs.
+- `internal/profiles` stores version-1 `profiles.json` with up to 16 profiles.
+  `default` uses the unchanged legacy root state; others use `profiles/<id>`.
+  Migration preserves identity/enrollment and legacy startup policy (managed on,
+  manual off). IDs are DNS-safe lowercase names, 1–31 characters. No profile
+  deletion/renaming UI exists yet. Only default can host a primary; additional
+  profiles enroll as clients.
+- One process networking owner holds the global lock; each profile has its own
+  WireGuard engine, TUN and route journal. Linux uses hashed interface names;
+  Darwin uses separate utun devices. The coordinator reserves pools, interface
+  networks and AllowedIPs; failed cleanup retains reservations. Crash recovery
+  remains conservative and never claims the userspace tunnel survives death.
+- Auto-start profiles are attempted in sorted order. Overlap failures stay paused;
+  other startup failures can retry through control reconciliation. Manual up/down
+  is independent from saved startup policy. Join can save enrollment then fail
+  its connect-now step with 409; the user can switch networks without re-enrolling.
+- One DNS hub owns host resolver changes. It serves a loopback aggregate at
+  127.0.0.1:53 and per-primary authorities at their VPN addresses. Local names are
+  `host.<profile>.meldnet.internal`; legacy `host.meldnet.internal` aliases work
+  only when unique among connected profiles. Ambiguity is NXDOMAIN. Disconnect
+  removes that profile’s records; the final disconnect restores the resolver.
+  Configured private reverse pools remain private while another profile is active.
+  macOS journals each reverse resolver file; Linux aggregate uses fallback proxy
+  integration. Resolver edits preserve external changes and recovery journals.
+- Managed networks remain trusted-primary relay networks, not direct mesh or
+  end-to-end client encryption. Enrollment uses pinned HTTPS, hashed one-use keys,
+  allocated IPv4 pools and authenticated member addresses. Membership changes can
+  briefly recreate a tunnel. Private DNS never forwards private misses upstream.
 
-- Private DNS is embedded Go, UDP/TCP 53 bound only to the primary VPN address,
-  with registered-source checks, no recursion, 30-second positive/five-second
-  negative TTL, and atomic registry snapshots. Private queries never fall back
-  to public resolvers. The directory exposes each final `hostname`; invalid or
-  case-colliding legacy names receive deterministic public-key-derived aliases.
-- macOS installs owned forward/reverse `/etc/resolver` files. Linux prefers
-  systemd-resolved D-Bus split DNS when its stub is in use, otherwise uses an
-  embedded loopback proxy preserving original upstreams/search/options.
-  Resolver files are journaled before writes, restored on disconnect/restart,
-  and external edits are preserved. A six-second public-query-only shutdown
-  grace handles cached resolver addresses during immediate reconnect.
-- DNS follows daemon/tunnel lifecycle, never TUI lifecycle. Activation failures
-  appear in `status.dns.error` without breaking VPN enrollment/connectivity;
-  cleanup failures propagate. Simulation never opens DNS listeners or changes
-  resolver settings. Optional DNS metadata keeps older primaries compatible.
-- Primary options, registry, invites, revocations, and client registration persist
-  in owner-only atomic `network.json`. Existing manual nodes cannot silently become
-  managed nodes. Use fresh state directories for initial primary/client setup.
-- HTTPS uses Fiber v3.5.0, a generated persistent self-signed certificate, TLS 1.3,
-  and exact certificate fingerprint pinning bundled into enrollment keys. Keys
-  expire after one hour and authorize one device; exact retries are idempotent.
-- Client bearer credentials are generated/persisted before registration. The
-  primary stores only SHA-256 hashes of API/enrollment credentials. WireGuard and
-  TLS private keys never cross APIs, logs, arguments, or UI. Enrollment credentials
-  are the explicit exception: returned once to the authorized local caller and
-  pasted into the TUI or read from a private file/stdin.
-- Each client keeps one WireGuard peer (primary), routes the managed pool to it,
-  and uses a 25-second keepalive. Primary peers each allow only the assigned /32.
-  The primary learns roaming client endpoints from authenticated packets.
-- The primary is a trusted hub: it decrypts/re-encrypts transit traffic. This is
-  not direct mesh or end-to-end encryption between clients. The relay wrapper
-  accepts only enrolled sources and primary/member destinations, decrements IPv4
-  TTL, recomputes checksums, and bounds its packet queue. OS forwarding/NAT is not
-  required. The primary must remain reachable over HTTPS and WireGuard UDP.
-- Allocation is serialized and saved before response. Private IPv4 /16–/28 pools,
-  primary at first usable IP, clients thereafter, max 128 lifetime registrations.
-  Revoked IPs/names are deliberately not reused; smaller pools exhaust sooner.
-- Controllers reconcile every three seconds. Managed daemons reconnect after
-  restart; manual nodes retain explicit-connect semantics. Down pauses until up
-  or restart. UI exit never stops the daemon. Revocation removes the primary
-  peer and the client stops on its next authenticated HTTP denial.
-- Membership changes currently recreate the primary tunnel. Existing clients may
-  briefly lose traffic while WireGuard handshakes recover. Unchanged settings do
-  not recreate it. Control outages preserve established tunnels and surface errors.
-- wireguard-go device/conn/tun are embedded, logging disabled, no UAPI exposed.
-  Native Linux Netlink and Darwin ioctl/PF_ROUTE configure non-persistent TUNs.
-  Preserve endpoint-route journals until cleanup succeeds; do not replace existing
-  administrator routes. Only AllowedIPs create routes; defaults become /1 pairs.
-- Fiber imports os/exec transitively for optional prefork. Prefork is disabled.
-  Make checks prohibit direct application os/exec and daemon presentation imports.
-  Runtime containers test with an empty executable PATH. CGO-disabled builds remain.
-- Local socket peer credentials and ownership protect the privileged control API.
-  One production networking owner per filesystem via /var/run/meldnet-network.lock.
-- Simulation never sends VPN traffic or fabricates handshakes. Managed simulation
-  does send real HTTPS registration/synchronization traffic.
+## Controls and API
 
-## Code map
+- `meldnet networks`; `meldnet --network work join --name laptop --key-file FILE`
+  (or stdin), with `--auto-connect=false` and/or `--connect=false` as needed.
+  `meldnet --network work up`, `down`, `autoconnect on|off`, `peers`, `status`, `tui`.
+  Commands without --network target default; enrollment secrets are never args.
+- TUI: n opens networks, arrows select, c/d connect/disconnect, a toggles startup,
+  Enter opens peers, + opens masked enrollment with separate startup/connect choices.
+  Async status results are scoped so late replies cannot cross selected profiles.
+- API: GET /v1/networks, POST /v1/networks/join with
+  {id,name,key,auto_connect,connect}, PUT /v1/networks/{id}/autoconnect with
+  {auto_connect}. Existing v1 paths are scoped by replacing /v1 with
+  /v1/networks/{id}. Unscoped paths retain default compatibility. Missing profile
+  is 404 and range overlap is 409. Profile mutation JSON is limited to 16 KiB.
+- Menu: per-network submenus show connection, startup checkbox, warning and peers;
+  peers copy qualified hostnames. Join adds memberships independently. Status
+  distinguishes interface/handshake/control evidence and simulation. The template
+  icon adapts the first lowercase m and detached accent in https://meld.si.
+- Open TUI opens the bundled CLI in Terminal as the authorized user, using the
+  same socket, through a private self-removing command document. No sudo, Apple
+  Events or daemon startup is involved. Shell metacharacter handling is tested.
 
-- `cmd/meldnetd`: daemon flags, local API, managed controller/Fiber lifecycle.
-- `cmd/meldnet`: TUI and headless commands; enrollment from file/stdin only.
-- `internal/control`: enrollment, pinned TLS, Fiber API, allocation/revocation,
-  private registry, autonomous client, state validation.
-- `internal/privatedns`: authoritative server, proxy, DNS-safe naming, resolver
-  journals/recovery, macOS resolver files, Linux resolved D-Bus/fallback.
-- `internal/service/dns.go`: presentation-independent DNS lifecycle/status.
-- `internal/service/managed.go`: managed identity and serialized reconciliation.
-- `internal/service/service.go`: manual revisions/lifecycle, managed guard/pause.
-- `internal/vpn/relay.go`: primary in-process IPv4 relay over a TUN wrapper.
-- `internal/vpn/wireguard.go`: embedded engine, endpoint planning, journal recovery.
-- `internal/vpn/network*.go`: native addresses/routes; `status.go`: public allowlist.
-- `internal/config`, `internal/securefs`: identity, atomic owner-only storage, locks.
-- `internal/api`: protected local HTTP JSON API shared by frontends.
-- `internal/tui`: masked join form, managed directory, manual settings/status.
-- `scripts/integration-primary.sh`: primary plus two isolated client networks,
-  real traffic, private DNS, no OS forwarding, crash/restart, and revocation.
-- `scripts/test-dns-linux.sh`: isolated Linux tests with a private D-Bus and mock
-  resolve1 service, requiring neither host DNS changes nor systemd installation.
-- `scripts/integration-linux.sh`: manual IPv4/IPv6, route/UID/recovery regression.
-- `scripts/smoke-managed-tui.py`, `scripts/smoke-tui.py`: real PTY interactions
-  against temporary unprivileged simulated daemons.
-- `packaging`: optional systemd/launchd templates, not installed on host.
+## Installer and local state
 
-## Verification
+- `make macos-installer` builds a universal macOS 13+ .pkg; `make
+  macos-installer-test` checks archive and sandbox installation behavior.
+  It includes the menu app, CLI, root daemon, boot LaunchDaemon and login agent.
+- Installer requests native administrator authorization, sets secure root ownership
+  and private state/log permissions, preserves the authorized UID on upgrade,
+  loads absent jobs immediately and does not force a reboot or stop existing jobs.
+  User shuts down a prior foreground daemon. CLI/TUI retain the same allowed UID.
+- Package is a local development build: ad-hoc signed code, unsigned installer,
+  not notarized. Signing identities are supported; production distribution still
+  requires signing/notarization and disposable-Mac install testing.
+- /Applications/Meldnet.app and root package files were observed on this laptop
+  from an installation outside this turn. This multi-network update only rebuilt
+  artifacts: it did not install/replace the host app, stop a host daemon, change
+  host DNS/routes or connect a real host VPN. Install the rebuilt package to use it.
+  An earlier session installed the user menu LaunchAgent. No reboot is needed.
 
-- `make check build cross`: passed on macOS arm64. Formatting, vet, dependency
-  guards, race-enabled unit/API/TUI tests, and CGO-disabled builds for
-  darwin/linux × amd64/arm64.
-- DNS tests cover UDP/TCP/EDNS, A/PTR, NODATA/NXDOMAIN, source checks, revocation,
-  upstream routing/no private fallback, suspended private queries, file conflicts,
-  partial writes/crash recovery, and temporary macOS forward/reverse resolver files.
-- `bash scripts/test-dns-linux.sh`: passed. Linux DNS/file tests and resolved D-Bus
-  method/argument/lifecycle tests use an isolated private bus and mock service.
-- Control tests cover pinned HTTPS, anonymous denial, expired/reused invites,
-  concurrent unique allocation, idempotent retries, durable identity/registry,
-  replacement keys after failed enrollment, recovery after a lost registration
-  response and expired invite, credential hash storage, revocation,
-  automatic connection, and rejecting manual edits on managed nodes.
-- Relay tests cover destination/source restrictions, primary delivery, TTL,
-  checksum repair, buffer independence, malformed headers, and utun read headroom.
-- `scripts/integration-primary.sh`: passed with real embedded WireGuard on Linux
-  arm64. Two clients on separate Docker networks reached each other and primary
-  with primary OS IPv4 forwarding disabled. Automatic addresses, discovery,
-  handshakes, SIGKILL/restart of primary and client, identity persistence, revoked
-  client teardown/unreachability, and surviving client connectivity passed.
-  New DNS coverage passed: UDP/TCP, PTR, OS hostname resolution, original upstream
-  preservation, immediate down/up, resolver recovery after SIGKILL, revoked-name
-  NXDOMAIN, and resolver restoration after revocation. Daemons use an empty PATH.
-- `scripts/integration-linux.sh`: passed; real manual IPv4/IPv6 traffic, full
-  routes, endpoint bypass, route-conflict rollback, UID/private-file isolation,
-  crash recovery, identity preservation, reconnect, and teardown remain working.
-- `python3 scripts/smoke-managed-tui.py`: passed in an 80×24 PTY; masked key paste,
-  automatic assignment/connection, directory rendering, and UI quit independence.
-- `python3 scripts/smoke-tui.py`: passed; manual TUI regression and quit independence.
-- Baseline Darwin ioctl/route encoding/read-only route lookup,
-  and engine rollback/journal tests remain part of the project; check runs the
-  applicable Go tests. Native macOS encrypted traffic has NOT been verified.
-  Native macOS system resolver activation and a real systemd-resolved service
-  have NOT been exercised; macOS tests use temporary files, resolved uses a mock.
+## Verification of this milestone
 
-Tests create no host VPN or installed service. Docker tests grant NET_ADMIN/TUN
-only to disposable containers on internal networks; all are cleaned up on exit.
-The integration image is cached. Repository is on main with uncommitted files;
-no remote, commit, or pull request was created.
+- `gofmt -w cmd internal`; final `make check cross`: PASS. Includes go vet ./...,
+  go test -race ./..., daemon dependency/subprocess checks and CGO-disabled builds
+  for Darwin/Linux amd64/arm64. Cross-compilation is not native traffic validation.
+- New race tests: independent enrollment/identities and persistent preferences,
+  legacy migration, concurrent and nested IPv4/IPv6 overlap rejection, cleanup
+  reservation retention, profile API isolation/validation/privacy, scoped TUI
+  controls/stale-reply handling/masked enrollment, multi-network DNS separation
+  and macOS temporary resolver-file recovery.
+- `bash scripts/integration-linux.sh`: PASS. Real encrypted IPv4/IPv6, defaults,
+  endpoint protection, UID isolation, crash recovery, identity persistence and
+  teardown, with daemon PATH containing no tools.
+- `bash scripts/integration-primary.sh`: PASS. Real enrollment, encrypted relay,
+  revocation, UDP/TCP/PTR private DNS, OS resolution, upstream preservation and
+  resolver recovery/cleanup.
+- `bash scripts/integration-multinetwork.sh`: PASS (including final repeat). Two
+  simultaneous encrypted networks, nested overlap rejection, scoped DNS and
+  ambiguous-alias NXDOMAIN, independent down, auto-start policy, crash recovery
+  and unchanged identity. Test restart waits for killed-process resource release.
+- `bash scripts/test-dns-linux.sh`: PASS, including new aggregate DNS test and
+  mocked systemd-resolved lifecycle. Docker was initially unavailable; started
+  Docker Desktop and reran successfully. All networking tests use disposable
+  NET_ADMIN/TUN containers, not host routes/DNS, and clean up on exit.
+- `python3 scripts/smoke-tui.py` and `python3 scripts/smoke-managed-tui.py`: PASS
+  in native PTYs: rendering, masked enrollment, directory, simulation labeling
+  and quit independence. Multi-network controls additionally have focused tests.
+- `make macos-test`: PASS. Swift compilation, legacy and scoped API fixtures,
+  startup mutation, overlap error, profile decoding, privacy and fake TUI launcher.
+- `make macos-installer-test`: PASS. Universal archive, authorization/no-restart,
+  ownership/modes, signatures, UID gating; sandbox fresh/upgrade, immediate startup,
+  existing job preservation, failures and filesystem attack checks.
+- Earlier DNS test hit an ephemeral UDP/TCP test-port collision; isolated rerun and
+  final suite passed. A new TUI test initially exceeded macOS Unix socket path
+  length; it now uses a short temporary directory and passes.
+- Native macOS encrypted VPN traffic and live system resolver activation have NOT
+  been exercised. Darwin resolver tests use temporary paths; systemd-resolved uses
+  a mock. Live Terminal opening/menu interactions have not been UI-tested for this
+  milestone. Prior icon preview was rendered and inspected offscreen.
 
-## Limitations and next actions
+## Next actions and limitations
 
-1. Validate privileged macOS utun setup and encrypted traffic with actual peers.
-2. Replace membership-triggered primary tunnel recreation with live peer/route
-   reconciliation to avoid interruption to existing sessions.
-3. Add certificate/credential rotation and device re-enrollment/address reuse.
-   Current primary TLS certificate lasts five years; back up complete state.
-4. Add managed IPv6, direct NAT traversal/mesh, ACLs, endpoint mobility, and
-   release/service-install testing if continuing toward broader Tailscale parity.
+1. Validate installer upgrade, login/boot, multi-utun traffic, DNS and menu controls
+   on a disposable Mac/VM with real peers; sign/notarize for distribution.
+2. Shared local DNS requires 127.0.0.1:53 to be available; occupied port reports DNS
+   failure. Linux fallback proxy death can interrupt ordinary DNS until recovery;
+   supervise the daemon. No short-name search suffix is installed.
+3. Replace membership-triggered tunnel recreation with live peer reconciliation.
+4. Add profile removal/rename, credential rotation and address reuse as separate
+   features. Primary TLS lasts five years; back up complete state, not just keys.
+5. Managed pools remain private IPv4 /16–/28. No exit nodes, NAT/firewall setup,
+   kill switch, direct mesh/NAT traversal, ACLs or automatic underlay endpoint
+   refresh. Primary availability/bandwidth bounds each managed network.
 
-Private DNS currently uses fixed FQDNs under `meldnet.internal`; no short-name
-search suffix is installed. Linux fallback proxy crashes can interrupt ordinary
-DNS until daemon restart recovers the resolver file; run under service supervision.
-Host firewalls must allow UDP/TCP 53 on the VPN interface, not the public interface.
-
-No exit nodes, NAT/firewall provisioning, kill switch, direct mesh, or automatic
-underlay/endpoint refresh. Primary availability/bandwidth bounds the whole network.
-No automatic migration of existing manual identities into managed mode. Manual
-IPv4/IPv6 features are independent from the IPv4-only managed pool.
-
-## Handoff method
-
-Read this file and docs/architecture.md before working. Update current state,
-exact verification, limitations, and ordered next steps before handing back.
-Preserve durable decisions, remove obsolete progress notes, and never record secrets.
+Repository remains uncommitted; no remote, commit or PR was created. Read this
+file and docs/architecture.md before changes; update exact results and remaining
+limitations before handing back. Never record enrollment or private-key secrets.

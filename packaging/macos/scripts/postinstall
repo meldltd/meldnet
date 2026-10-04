@@ -1,0 +1,38 @@
+#!/bin/bash
+set -euo pipefail
+script_dir=$(/usr/bin/dirname "$0")
+source "$script_dir/common.sh"
+check_target "$@"
+uid=$(allowed_uid)
+# Payload ownership is also encoded by pkgbuild --ownership recommended.
+/usr/sbin/chown root:wheel /Library/PrivilegedHelperTools/si.meldnet.daemon
+/bin/chmod 0755 /Library/PrivilegedHelperTools/si.meldnet.daemon
+/usr/bin/install -d -o root -g wheel -m 0700 /Library/Logs/Meldnet
+/usr/bin/touch /Library/Logs/Meldnet/daemon.log
+/usr/sbin/chown root:wheel /Library/Logs/Meldnet/daemon.log
+/bin/chmod 0600 /Library/Logs/Meldnet/daemon.log
+# Atomic publication in root-owned directories; no writes into a user's home.
+daemon=$(/usr/bin/mktemp /Library/LaunchDaemons/.meldnet.XXXXXXXX)
+agent=$(/usr/bin/mktemp /Library/LaunchAgents/.meldnet.XXXXXXXX)
+trap '/bin/rm -f "$daemon" "$agent"' EXIT
+/usr/bin/sed "s/@UID@/$uid/g" "$script_dir/daemon.plist.in" > "$daemon"
+/usr/bin/sed "s/@UID@/$uid/g" "$script_dir/agent.plist.in" > "$agent"
+/usr/bin/plutil -lint "$daemon" "$agent"
+/usr/sbin/chown root:wheel "$daemon" "$agent"
+/bin/chmod 0644 "$daemon" "$agent"
+/bin/mv -f "$daemon" /Library/LaunchDaemons/si.meldnet.daemon.plist
+/bin/mv -f "$agent" /Library/LaunchAgents/si.meldnet.menubar.pkg.plist
+/bin/launchctl enable system/si.meldnet.daemon
+# The user stops any old foreground daemon. Never kill or unload an existing job.
+if ! /bin/launchctl print system/si.meldnet.daemon >/dev/null 2>&1; then
+    /bin/launchctl bootstrap system /Library/LaunchDaemons/si.meldnet.daemon.plist
+fi
+# Start the login app now when its authorized desktop session is available.
+# Otherwise the LaunchAgent will load on that account's next login.
+if /bin/launchctl print "gui/$uid" >/dev/null 2>&1; then
+    /bin/launchctl enable "gui/$uid/si.meldnet.menubar.pkg"
+    if ! /bin/launchctl print "gui/$uid/si.meldnet.menubar.pkg" >/dev/null 2>&1; then
+        /bin/launchctl bootstrap "gui/$uid" /Library/LaunchAgents/si.meldnet.menubar.pkg.plist
+    fi
+fi
+echo "Meldnet installed; no restart required. Stop any previous foreground daemon yourself. Desktop UID $uid has local API access."

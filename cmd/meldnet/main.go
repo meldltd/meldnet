@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"meldnet/internal/api"
 	"meldnet/internal/config"
+	"meldnet/internal/profiles"
 	"meldnet/internal/tui"
 )
 
@@ -27,23 +28,35 @@ func run() error {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		return errors.New("supported platforms are macOS and Linux")
 	}
+	networkID := flag.String("network", "default", "network profile to manage (before subcommand)")
 	socket := flag.String("socket", api.DefaultSocket, "daemon control socket (before subcommand)")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: meldnet [--socket PATH] [tui|status|init|config|apply FILE|key|up|down|invite|join|peers|revoke NAME]\n\nNo command opens the TUI. config exports editable settings; apply checks revision.")
+		fmt.Fprintln(os.Stderr, "Usage: meldnet [--socket PATH] [--network NAME] [tui|networks|autoconnect on|off|status|init|config|apply FILE|key|up|down|invite|join|peers|revoke NAME]\n\nNo command opens the TUI. config exports editable settings; apply checks revision.")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
-	c := api.NewClient(*socket)
+	c := api.NewClient(*socket).ForNetwork(*networkID)
 	defer c.Close()
 	args := flag.Args()
 	if len(args) == 0 {
 		args = []string{"tui"}
 	}
 	ctx := context.Background()
-	if args[0] != "init" && args[0] != "apply" && args[0] != "join" && args[0] != "revoke" && len(args) != 1 {
+	if args[0] != "init" && args[0] != "apply" && args[0] != "join" && args[0] != "revoke" && args[0] != "autoconnect" && len(args) != 1 {
 		return errors.New("unexpected arguments")
 	}
 	switch args[0] {
+	case "networks":
+		result, err := c.Networks(ctx)
+		if err != nil {
+			return err
+		}
+		return output(result)
+	case "autoconnect":
+		if len(args) != 2 || (args[1] != "on" && args[1] != "off") {
+			return errors.New("usage: meldnet --network NAME autoconnect on|off")
+		}
+		return c.SetAutoConnect(ctx, args[1] == "on")
 	case "invite":
 		key, e := c.Invite(ctx)
 		if e != nil {
@@ -65,6 +78,8 @@ func run() error {
 	case "join":
 		f := flag.NewFlagSet("join", flag.ContinueOnError)
 		name := f.String("name", "", "device name")
+		auto := f.Bool("auto-connect", true, "connect this network at daemon startup")
+		connect := f.Bool("connect", true, "connect immediately after enrollment")
 		file := f.String("key-file", "-", "enrollment key file, or - for stdin")
 		if e := f.Parse(args[1:]); e != nil {
 			return e
@@ -88,7 +103,7 @@ func run() error {
 		if len(b) > 8192 {
 			return errors.New("enrollment key too long")
 		}
-		return c.Join(ctx, *name, strings.TrimSpace(string(b)))
+		return c.JoinNetwork(ctx, profiles.JoinRequest{ID: *networkID, Name: *name, Key: strings.TrimSpace(string(b)), AutoConnect: *auto, Connect: *connect})
 	case "tui":
 		_, err := tea.NewProgram(tui.New(c)).Run()
 		return err

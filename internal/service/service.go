@@ -155,9 +155,6 @@ func (s *Service) Disconnect(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.paused = true
-	if s.node == nil {
-		return nil
-	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	return s.down(ctx)

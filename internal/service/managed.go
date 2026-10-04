@@ -80,3 +80,6 @@ func (s *Service) Identity(name string) (config.Public, error) {
 	s.node = n
 	return clonePublic(n), nil
 }
+
+// SetPaused controls reconciliation without starting a tunnel or changing startup policy.
+func (s *Service) SetPaused(paused bool) { s.mu.Lock(); defer s.mu.Unlock(); s.paused = paused }

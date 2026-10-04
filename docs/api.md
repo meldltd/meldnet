@@ -87,3 +87,28 @@ working by IP while `dns.active` is false and `dns.error` explains the problem.
 in the primary's registration/network response. The initial domain is fixed at
 `meldnet.internal`; server is the primary's VPN IP. A missing DNS object preserves
 compatibility with older primaries. No credentials are added to these responses.
+
+## Independent network profiles
+
+The original endpoints address `default`. Prefix any profile operation with
+`/v1/networks/{id}` instead of `/v1`: for example `GET /v1/networks/work/status`,
+`POST /v1/networks/work/up`, and `GET /v1/networks/work/network`.
+Authentication and key isolation are unchanged.
+
+| Method | Path | Contract |
+|---|---|---|
+| GET | `/v1/networks` | Array of `{id,auto_connect,status,network,warning?}` |
+| POST | `/v1/networks/join` | `{id,name,key,auto_connect,connect}`; enroll a profile |
+| PUT | `/v1/networks/{id}/autoconnect` | Required `{auto_connect:boolean}`; persist startup policy |
+
+Profile JSON bodies are limited to 16 KiB, with unknown fields rejected. IDs use
+1–31 lowercase letters/digits/hyphens, starting with a letter and ending with a
+letter or digit. There are at most 16 profiles, including `default`. Join booleans
+default to false when omitted. Legacy `/v1/network/join` retains connect-now and
+auto-connect defaults for a new default enrollment. Existing profiles preserve
+startup policy on enrollment retries. Changing startup policy never connects or
+disconnects the current tunnel. Missing profiles return 404; address-range conflicts
+return 409 with the network names and ranges. A join may enroll successfully and
+then return 409 because its connect-now request conflicts; refresh the list before
+retrying enrollment. No private keys are returned. Scoped directory responses
+contain hostnames qualified by the local profile ID.

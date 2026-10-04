@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+source "$(/usr/bin/dirname "$0")/common.sh"
+check_target "$@"
+allowed_uid >/dev/null

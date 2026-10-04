@@ -1,11 +1,11 @@
 # Architecture
 
 ```text
-meldnet (Bubble Tea TUI / headless CLI)
+meldnet (Bubble Tea TUI / headless CLI) or Meldnet.app (macOS menu bar)
              |
      HTTP JSON v1 over Unix socket
              |
-meldnetd -> service -> config store (private keys)
+meldnetd -> profiles -> per-network service -> config store (private keys)
                 |
              vpn.Engine
                 |
@@ -47,8 +47,8 @@ routes may outlive it, so intent is saved in private `runtime/routes.json` befor
 installation. Linux routes carry a dedicated protocol/priority, Darwin routes
 carry protocol flags. Recovery deletes only exactly matching marked routes on
 the recorded interface, leaving administrator replacements alone. Failed cleanup
-retains the journal, exposes an error, and is retryable via disconnect. Startup recovers routes; managed nodes recreate the tunnel automatically, while
-manual nodes stay disconnected. It cannot adopt a dead userspace device.
+retains the journal, exposes an error, and is retryable via disconnect. Startup recovers routes and recreates tunnels for profiles marked auto-connect;
+other profiles stay disconnected. It cannot adopt a dead userspace device.
 
 Status comes from the library's in-process configuration protocol. Its raw output
 contains keys: a streaming allowlist retains only public peer keys, handshake
@@ -162,6 +162,83 @@ service supervision is recommended. No host resolver changes occur in simulation
 
 Direct connectivity/NAT traversal, seamless peer reconciliation, network ACLs,
 certificate/credential rotation, IPv6 allocation, endpoint mobility, signed installers,
-and optional GUI/mobile frontends remain future work. Manual IPv4/IPv6 peers and
+and broader GUI/mobile frontends remain future work. Manual IPv4/IPv6 peers and
 full-tunnel routes still work independently. No exit-node, NAT, or kill-switch
 provisioning is included.
+
+## macOS menu bar frontend
+
+`macos/Meldnet` is a separate native Swift/AppKit executable, built without adding
+presentation dependencies to any Go package. It reads `/v1/status` and
+`/v1/network` over the authorized Unix socket on a background queue with bounded
+socket I/O and response sizes. A three-second timer refreshes public directory
+rows; NSPasteboard receives only the selected hostname. Failures clear the previous
+snapshot. Simulation and stale directory data never imply VPN reachability.
+
+A user LaunchAgent starts the menu app at login. A separate root LaunchDaemon
+starts the VPN at boot, independent of GUI login. The development shell installer leaves a running foreground daemon untouched and
+installs boot activation for the next restart; the packaged installer loads the
+service immediately without requiring reboot.
+Connection controls POST `/v1/up` and `/v1/down`; joining POSTs typed name/key
+JSON to `/v1/network/join`. Enrollment uses an NSSecureTextField, never arguments,
+logs or frontend persistence. A serial background queue keeps requests off the
+main thread; pending operations disable duplicate actions, and both success and
+failure trigger an observed-state refresh. API mutation waits are bounded at
+40 seconds, accommodating the daemon's tunnel/DNS lifecycle. Non-200 responses
+never echo raw server bodies or enrollment inputs. The daemon retains all
+validation and key/tunnel ownership. App quit never sends a daemon mutation. Go releases remain CGO-disabled; the
+optional macOS app uses Apple's built-in AppKit and Swift runtime.
+
+
+The optional universal installer is built by `make macos-installer`. Its system
+installation domain requests native administrator authorization; payload metadata
+sets root ownership. The privileged executable is isolated under
+`/Library/PrivilegedHelperTools`, while the menu app stays unprivileged. Installer
+scripts authorize the current console UID on first install, preserve an existing
+recognized service's UID on upgrade, and reject unsafe paths/custom configurations.
+A UID-filtered system LaunchAgent avoids running a useful control UI for unrelated
+accounts. Root-only logs are separate from private identity state. No reboot is
+required: package scripts enable and bootstrap the daemon and the authorized
+user's login agent when their domains/jobs are available. Already loaded jobs
+are left alone. The user stops the previous foreground daemon; installer scripts
+never kill, unload or restart it. Existing daemon ownership locks remain the
+protection against competing live instances. Bootstrap failures propagate.
+The default artifact is unsigned development packaging; optional Developer ID
+signing is available, with notarization still a separate release step.
+
+
+The menu's Open TUI action uses NSWorkspace to open a private `.command` document
+in Terminal, without Apple Events or elevation. The document invokes the bundled
+CLI with the app's selected socket and `tui` arguments, quoted literally, and
+removes itself before execution. No daemon or key ownership moves into the UI.
+Both app build paths bundle the CLI; their minimum macOS version is 13 to match
+Go's deployment target. The daemon still launches no external tools.
+
+## Multiple-network ownership
+
+`internal/profiles` maintains an owner-only versioned `profiles.json` index. The
+legacy root state remains the `default` profile; additional profiles live in
+`profiles/<id>` with independent keys, control membership, settings and recovery
+journals. The daemon holds one process-wide OS networking lock and creates a
+separate embedded WireGuard engine/TUN per profile. Linux names are stable hashed
+profile names; Darwin uses independent utun devices. Only `default` can host a
+primary server; additional profiles currently enroll as clients.
+
+A shared VPN coordinator atomically reserves interface networks, managed pools
+and peer AllowedIPs before creating a tunnel. Equal and nested IPv4/IPv6 ranges
+are rejected across profiles. Reservations survive failed cleanup; unresolved
+startup recovery blocks other ranges conservatively. Background reconciliation,
+legacy API requests and UI actions all use the same guard. Startup policy is
+independent of current connection intent. Managed reconcilers can update membership
+while paused without reconnecting. Saved auto-connect profiles start in sorted ID
+order. Overlap failures stay paused; other startup failures may retry reconciliation.
+
+One private-DNS hub owns host resolver edits and the loopback aggregate authority.
+Each connected primary also serves its own VPN address. The aggregate publishes
+`host.<local-profile>.meldnet.internal`; unqualified legacy aliases are exposed
+only when unique among connected profiles. All configured private reverse pools
+remain private while any managed network is connected, including disconnected
+profiles, preventing misses from reaching public upstreams. macOS journals each
+reverse-zone resolver file independently; Linux uses the journaled fallback proxy
+for the aggregate. Final disconnect restores resolver state. No frontend reads
+private state, invokes privileged commands or owns tunnel lifetime.

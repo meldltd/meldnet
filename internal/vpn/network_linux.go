@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -56,7 +57,7 @@ func (nativeNetwork) RouteTo(ctx context.Context, ip netip.Addr) (routeSpec, err
 		if err != nil {
 			continue
 		}
-		if link.Attrs().Name == tunnelName() {
+		if strings.HasPrefix(link.Attrs().Name, tunnelName()) {
 			continue
 		}
 		prefix := "0.0.0.0/0"
