@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
-	"syscall"
 	"time"
 
 	"meldnet/internal/api"
@@ -24,22 +22,20 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := entry(); err != nil {
 		fmt.Fprintln(os.Stderr, "meldnetd:", err)
 		os.Exit(1)
 	}
 }
-func run() error {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		return errors.New("supported platforms are macOS and Linux")
+func run(ctx context.Context, ready func()) error {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		return errors.New("supported platforms are macOS, Linux and Windows")
 	}
-	defaultData := "/var/lib/meldnet"
-	if runtime.GOOS == "darwin" {
-		defaultData = "/Library/Application Support/Meldnet"
-	}
+	defaultData := defaultDataDirectory()
 	data := flag.String("data-dir", defaultData, "private daemon state directory")
 	socket := flag.String("socket", api.DefaultSocket, "absolute control socket path")
-	uid := flag.Int("allow-uid", os.Getuid(), "local UID authorized to control the VPN")
+	uid := flag.Int("allow-uid", defaultUID(), "local UID authorized to control the VPN")
+	sid := flag.String("allow-sid", "", "Windows account SID authorized to control the VPN (required on Windows)")
 	simulate := flag.Bool("simulate", false, "simulate VPN lifecycle; no tunnel or VPN traffic (registration still uses HTTPS)")
 	primary := flag.Bool("primary", false, "initialize a primary registration daemon")
 	listen := flag.String("listen", ":8443", "primary HTTPS listen address")
@@ -54,8 +50,8 @@ func run() error {
 	if *uid < 0 {
 		return errors.New("allow-uid must be nonnegative")
 	}
-	if !*simulate && os.Geteuid() != 0 {
-		return errors.New("the WireGuard daemon requires root; run the TUI as your normal user")
+	if !*simulate && !hasNetworkPrivilege() {
+		return errors.New("the WireGuard daemon requires root or an elevated Windows account; run the frontend as your normal user")
 	}
 	if *simulate && (*data == defaultData || *socket == api.DefaultSocket) {
 		return errors.New("simulation requires explicit --data-dir and --socket paths separate from production")
@@ -128,20 +124,21 @@ func run() error {
 	defer networks.Close()
 	root, _ := networks.Runtime(profiles.Default)
 	svc := root.Service
-	listener, cleanup, err := api.Listen(*socket, *uid)
+	listener, cleanup, err := api.ListenForUser(*socket, *uid, *sid)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 	server := &http.Server{Handler: api.ProfilesHandler(networks), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 40 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 8 << 10}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	result := make(chan error, 2)
 	managedCtx, cancelManaged := context.WithCancel(ctx)
 	managedDone := make(chan struct{})
 	go func() { defer close(managedDone); networks.Run(managedCtx) }()
 	go func() { result <- networks.Serve(managedCtx) }()
 	go func() { result <- server.Serve(listener) }()
+	if ready != nil {
+		ready()
+	}
 	fmt.Fprintf(os.Stderr, "meldnetd: backend=%s socket=%s allowed_uid=%d\n", svc.Status(context.Background()).Backend, *socket, *uid)
 	select {
 	case <-ctx.Done():

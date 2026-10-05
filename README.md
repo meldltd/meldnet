@@ -1,17 +1,19 @@
 # Meldnet
 
-A Go VPN service with a separate Bubble Tea terminal client for macOS and Linux,
-and a native macOS menu bar app. The VPN lives in `meldnetd`; closing either
-frontend does not disconnect it. Both use the same versioned local API.
+A Go VPN service with a separate Bubble Tea terminal client for macOS, Linux
+and experimental Windows builds, a native macOS menu app and a Linux GTK desktop
+interface. The VPN lives in `meldnetd`; closing a frontend does not disconnect it.
+All frontends use the same versioned local API.
 
 **Current milestone:** a primary-managed WireGuard network with a Fiber HTTPS
 registration backend, automatic IP allocation, private DNS, device discovery, and client-to-client
 communication through the primary. WireGuard is embedded; manual peer configuration
 and a clearly labeled simulation mode are also available.
 
-There are **no separately installed VPN tools or runtime packages**. The Go
-libraries are compiled into the binaries. Interface addresses and routing use
-native OS calls; the daemon never launches networking commands.
+The daemon launches **no external VPN tools**. Go libraries are compiled into
+the binaries; addresses and routing use native OS APIs. Windows packages include
+the official signed Wintun driver DLL. Optional graphical frontends have their
+platform UI runtime dependencies, separate from the CGO-free Go daemon.
 
 ## Build
 
@@ -24,10 +26,30 @@ make cross
 ```
 
 `bin/meldnet` is the TUI/headless client. `bin/meldnetd` is the daemon. Cross builds
-are placed under `bin/{darwin,linux}-{amd64,arm64}/`. No C toolchain is required to
+are placed under `bin/{darwin,linux,windows}-{amd64,arm64}/` (Windows uses `.exe`). No C toolchain is required to
 build the application binaries. Builds disable CGO; Linux binaries are static.
 A terminal of at least 64 columns × 24 rows is
 recommended.
+
+## Linux desktop and Windows
+
+`make linux-gui` creates [the GTK desktop payload](linux/README.md), with
+per-network tray menus, an ordinary window for desktops without tray support,
+masked enrollment, independent startup preferences and hostname copying. Launch
+`python3 linux/meldnet_gui.py` as the authorized user after the daemon is running.
+The GUI never starts a privileged service. `make linux-gui-test` tests its public
+API/model behavior; Linux additionally tests real local peer credentials.
+
+`make windows-package` creates `bin/Meldnet-windows-{amd64,arm64}.zip`, including
+CGO-free binaries and a checksum-pinned official Wintun DLL. See
+[Windows installation and limitations](windows/README.md) for the explicit
+administrator installer, authorized user SID and LocalSystem service. Windows
+is experimental pending native VM tests of IPC, ACLs, routing, driver lifetime,
+DNS and installer behavior. Cross-compilation does not prove encrypted traffic.
+
+[iOS and Android implementation assessment](docs/mobile-platforms.md) covers
+native VPN ownership, upstream WireGuard embedding, secrets, DNS and background
+lifecycle. Mobile applications are not implemented in this milestone.
 
 ## macOS menu bar and automatic startup
 
@@ -55,8 +77,7 @@ Networks marked for auto-connect reconnect after boot; other networks stay disco
 not use this default installer for a daemon with custom paths.
 
 For just the menu app, use `./scripts/install-macos.sh --menu-only`. To build/test
-without installing anything, use `make macos-test`. Linux retains its TUI/CLI and
-systemd service; the menu bar app is macOS-only. See [service setup and removal](docs/services.md).
+without installing anything, use `make macos-test`. Linux also has a GTK desktop/tray app; Windows has daemon/CLI/TUI builds. See [service setup and removal](docs/services.md).
 
 ## Build a macOS installer
 
@@ -406,7 +427,7 @@ have been removed.
 
 ```sh
 make check          # formatting, vet, race-enabled unit/API/TUI tests
-make cross          # macOS + Linux, Intel + ARM
+make cross          # macOS + Linux + Windows, amd64 + arm64
 make integration    # manual IPv4/IPv6 plus primary/two-client traffic in containers
 python3 scripts/smoke-tui.py  # actual terminal app, temporary simulated daemon
 python3 scripts/smoke-managed-tui.py  # masked enrollment and device directory

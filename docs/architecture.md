@@ -162,7 +162,8 @@ service supervision is recommended. No host resolver changes occur in simulation
 
 Direct connectivity/NAT traversal, seamless peer reconciliation, network ACLs,
 certificate/credential rotation, IPv6 allocation, endpoint mobility, signed installers,
-and broader GUI/mobile frontends remain future work. Manual IPv4/IPv6 peers and
+and mobile frontends remain future work. Windows native acceptance testing
+and Linux desktop distribution testing remain required. Manual IPv4/IPv6 peers and
 full-tunnel routes still work independently. No exit-node, NAT, or kill-switch
 provisioning is included.
 
@@ -242,3 +243,44 @@ profiles, preventing misses from reaching public upstreams. macOS journals each
 reverse-zone resolver file independently; Linux uses the journaled fallback proxy
 for the aggregate. Final disconnect restores resolver state. No frontend reads
 private state, invokes privileged commands or owns tunnel lifetime.
+
+## Additional desktop platforms
+
+Windows is an experimental supported build target for daemon/CLI/TUI, with OS
+code in `_windows.go` files. Embedded wireguard-go uses Wintun's signed driver
+DLL; networking still uses compiled Go and native Windows APIs with no child
+process. IP Helper handles addresses/routes and journals LUID/name/next-hop plus
+owned metric/protocol to preserve administrator replacements. The daemon runs
+under LocalSystem's SCM lifecycle or explicitly elevated in the foreground.
+Its protected named pipe serves the same HTTP JSON v1, with a single allowed
+user SID and LocalSystem DACL, remote rejection, first-instance exclusivity and
+client-side privileged-server-owner validation. Owner-only protected DACLs
+replace Unix mode bits; reparse points are refused. State belongs to the VPN
+owner, never to the frontend. Linux/macOS code and releases retain CGO_ENABLED=0,
+and Windows Go builds do too; Windows additionally needs the bundled driver DLL.
+
+Windows private DNS uses journaled local NRPT registry rules for only the private
+forward/reverse namespaces and loopback aggregate address. Rules are new,
+Meldnet-owned entries; existing foreign local or Group Policy NRPT settings
+block activation. Recovery checks every existing value, preserves external
+edits and retains failed-cleanup intent. Native DNS cache invalidation follows
+registry publication/removal. These Windows APIs, policy notifications and SCM
+installation require native VM acceptance testing before production claims;
+cross-compilation and fake policy tests cannot establish working Windows traffic.
+See `windows/README.md` for exact packaging and installation boundaries.
+
+`linux/meldnet_gui.py` is a separate native GTK 3 frontend with an optional
+Ayatana/AppIndicator tray, mirroring the macOS per-network menus and join controls.
+A window is also available when a desktop lacks tray support. It uses only the
+UID-authorized Unix API, validates server peer credentials, polls asynchronously,
+refreshes after ambiguous mutation outcomes, masks/clears enrollment and copies
+only public hostnames. Neither frontend exit nor window close changes daemon
+state. The GTK/Python presentation dependencies never enter Go daemon packages.
+The desktop entry and optional systemd unit are packaged separately; installing
+or activating a real service is an explicit administrator step.
+
+Mobile has been assessed in `docs/mobile-platforms.md`. iOS needs a signed
+Packet Tunnel Network Extension with WireGuardKit; Android needs an OS-controlled
+VpnService with the upstream embedded backend. Neither is a packaged desktop
+daemon or an implemented feature. Start with one active managed membership and
+platform-owned DNS/secret persistence; preserve trusted-primary relay semantics.

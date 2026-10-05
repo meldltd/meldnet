@@ -19,8 +19,6 @@ import (
 	"meldnet/internal/service"
 )
 
-const DefaultSocket = "/var/run/meldnet/control.sock"
-
 type Client struct {
 	http    *http.Client
 	profile string
@@ -28,7 +26,7 @@ type Client struct {
 
 func NewClient(socket string) *Client {
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "unix", socket)
+		return dialLocal(ctx, socket)
 	}, DisableCompression: true}
 	return &Client{http: &http.Client{Transport: transport, Timeout: 40 * time.Second}}
 }
@@ -55,7 +53,7 @@ func (c *Client) request(ctx context.Context, method, path string, input, output
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
-		return errors.New("cannot reach meldnetd; check that it is running, the socket path matches, and your UID has access")
+		return errors.New("cannot reach meldnetd; check that it is running, the endpoint matches, and your account has access")
 	}
 	defer res.Body.Close()
 	reader := io.LimitReader(res.Body, 1<<20)

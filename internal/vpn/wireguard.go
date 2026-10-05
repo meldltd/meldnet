@@ -68,7 +68,11 @@ func NewWireGuard(dir string) (*WireGuard, error) {
 type Owner struct{ lock *os.File }
 
 func NewOwner() (*Owner, error) {
-	lock, err := securefs.Lock("/var/run/meldnet-network.lock")
+	path, err := networkLockPath()
+	if err != nil {
+		return nil, err
+	}
+	lock, err := securefs.Lock(path)
 	if err != nil {
 		return nil, err
 	}

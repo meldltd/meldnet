@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Meldnet
+Comment=Manage Meldnet VPN networks
+Exec=/usr/bin/python3 /usr/local/lib/meldnet/meldnet_gui.py
+Icon=network-vpn
+Terminal=false
+Categories=Network;
+StartupNotify=true

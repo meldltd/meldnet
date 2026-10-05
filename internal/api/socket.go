@@ -1,3 +1,5 @@
+//go:build darwin || linux
+
 package api
 
 import (
@@ -103,4 +105,11 @@ func (l *authorizedListener) Accept() (net.Conn, error) {
 		}
 		c.Close()
 	}
+}
+
+func ListenForUser(path string, uid int, sid string) (net.Listener, func(), error) {
+	if sid != "" {
+		return nil, nil, errors.New("allow-sid is only supported on Windows")
+	}
+	return Listen(path, uid)
 }

@@ -25,8 +25,8 @@ func main() {
 	}
 }
 func run() error {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		return errors.New("supported platforms are macOS and Linux")
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		return errors.New("supported platforms are macOS, Linux and Windows")
 	}
 	networkID := flag.String("network", "default", "network profile to manage (before subcommand)")
 	socket := flag.String("socket", api.DefaultSocket, "daemon control socket (before subcommand)")

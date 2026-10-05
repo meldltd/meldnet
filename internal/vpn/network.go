@@ -14,6 +14,7 @@ type routeSpec struct {
 	Index     int    `json:"index"`
 	Gateway   string `json:"gateway,omitempty"`
 	Source    string `json:"source,omitempty"`
+	LUID      uint64 `json:"luid,omitempty"` // Windows identity, prevents index-reuse cleanup.
 }
 
 type network interface {

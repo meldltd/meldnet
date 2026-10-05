@@ -1,6 +1,15 @@
 .DEFAULT_GOAL := build
 
-.PHONY: build test check cross demo integration macos-app macos-test macos-installer macos-installer-test
+.PHONY: build test check cross demo integration macos-app macos-test macos-installer macos-installer-test linux-gui linux-gui-test windows-package
+
+linux-gui:
+	python3 scripts/build-linux-gui.py
+
+linux-gui-test:
+	python3 -m unittest discover -s linux/tests -v
+
+windows-package: cross
+	python3 scripts/build-windows-package.py
 
 macos-installer:
 	./scripts/build-macos-installer.sh
@@ -29,11 +38,12 @@ check:
 	go test -race ./...
 
 cross:
-	@set -eu; for os in darwin linux; do \
+	@set -eu; for os in darwin linux windows; do \
 	  for arch in amd64 arm64; do \
+	    ext=""; if [ "$$os" = windows ]; then ext=.exe; fi; \
 	    echo "Building $$os/$$arch"; \
-	    CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -o bin/$$os-$$arch/meldnet ./cmd/meldnet; \
-	    CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -o bin/$$os-$$arch/meldnetd ./cmd/meldnetd; \
+	    CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -o bin/$$os-$$arch/meldnet$$ext ./cmd/meldnet; \
+	    CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -o bin/$$os-$$arch/meldnetd$$ext ./cmd/meldnetd; \
 	  done; \
 	done
 

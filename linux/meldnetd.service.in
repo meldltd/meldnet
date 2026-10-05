@@ -1,0 +1,16 @@
+[Unit]
+Description=Meldnet VPN daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/sbin/meldnetd --allow-uid=@UID@
+Restart=on-failure
+RestartSec=3
+UMask=0077
+TimeoutStopSec=50
+
+[Install]
+WantedBy=multi-user.target

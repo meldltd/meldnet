@@ -1,3 +1,5 @@
+//go:build darwin || linux
+
 // Package securefs implements private on-disk state for the daemon.
 package securefs
 

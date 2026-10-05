@@ -1,21 +1,122 @@
 # Meldnet handoff
 
-Updated: 2026-10-04
+Updated: 2026-10-05
 
 ## Current milestone
 
-Independent multi-network profiles are implemented across the daemon, local API,
-CLI, Bubble Tea TUI and native macOS menu app. Multiple non-overlapping tunnels can
-run concurrently. Each profile persists a separate auto-connect preference;
-connection/disconnection does not change that preference. Equal and nested IPv4
-and IPv6 ranges are blocked atomically in the daemon, with actionable warnings.
-The latest universal installer is `bin/Meldnet-0.1.0-universal.pkg`.
+Independent multi-network profiles remain implemented across daemon/API/CLI/TUI
+and macOS menu app. This milestone adds experimental Windows daemon/CLI/TUI
+support and a native Linux GTK desktop/tray frontend. iOS/Android are assessed
+in `docs/mobile-platforms.md`; no mobile application is implemented.
+
+New artifacts: `bin/Meldnet-windows-amd64.zip`,
+`bin/Meldnet-windows-arm64.zip` and `bin/Meldnet-linux-gui.tar.gz`.
+Windows packages include official signed Wintun 0.14.1 DLLs and an explicit
+PowerShell installer. Linux payload includes GUI, desktop entry and optional
+systemd definition/installer, with daemon binaries installed separately.
+The previous universal macOS installer remains
+`bin/Meldnet-0.1.0-universal.pkg`; this turn rebuilt the app but not that installer.
+No host service was installed/started, real host VPN connected, or host DNS/routes
+changed. All real encrypted traffic validation used disposable Linux containers.
+
+## Platform additions and verification (2026-10-05)
+
+- Windows OS code is isolated in `_windows.go`. Local v1 HTTP uses a SID-restricted
+  local named pipe, rejects remote clients and additional unprivileged instances,
+  and authenticates the server's privileged owner before enrollment crosses IPC.
+  Only an individual account SID is accepted. Protected owner-only DACLs replace
+  Unix modes; reparse paths are rejected. File handles provide exclusive locks.
+- Embedded wireguard-go/Wintun uses native IP Helper for IPv4/IPv6 addresses and
+  routes; endpoint journals include LUID/name/next-hop and owned metric/protocol.
+  SCM starts independently of a GUI and reports Running after API startup; stop
+  and shutdown cancel the daemon and run cleanup. Windows releases keep CGO=0 but
+  require the bundled driver DLL. No daemon subprocess or presentation import.
+- Windows private DNS uses journaled, owned local NRPT rules for the private
+  forward/reverse namespaces and loopback aggregate, preserving unrelated rules
+  and external edits. Foreign local/Group Policy rules block activation.
+  Native policy activation/cache invalidation needs Windows acceptance tests.
+- Linux GUI uses GTK3/PyGObject and optional Ayatana/AppIndicator outside Go.
+  It mirrors macOS per-network controls, masked join, independent startup, errors,
+  evidence-based peer labels and public-hostname copying. It has a window fallback,
+  serial background requests, bounded responses/timeouts, server peer credentials,
+  stale-snapshot clearing and observed-state refresh after mutations. Quit leaves
+  tunnels running. No Open TUI launcher is implemented in Linux GUI.
+- `gofmt -w cmd internal`; final `make check cross`: PASS. Includes `go vet ./...`,
+  `go test -race ./...`, formatting/subprocess/daemon-UI isolation guards and
+  CGO-free daemon/client builds for Darwin/Linux/Windows amd64/arm64.
+  Windows cross-compilation is NOT native test execution or traffic validation.
+- `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go vet ./...` and equivalent arm64:
+  PASS, including Windows-specific test-source type checking. Added native tests
+  for DACL privacy/exclusive locking/reparse refusal and named-pipe path/account
+  validation/API exclusivity. They have NOT run on Windows; pipe test needs an
+  elevated test process. Common API validation stays platform-neutral; Unix
+  socket/resolver-file tests are correctly excluded on Windows.
+- Portable DNS-policy fake tests: PASS in the race suite. Verify journal-before-
+  write, partial-write crash recovery, external-edit preservation, cleanup failure
+  and retained intent when resolver refresh fails. No test touches host DNS.
+- `make linux-gui-test`: PASS on macOS (3 model tests; Linux-only peer-credential
+  transport test skipped). Container `python3 -m unittest discover -s linux/tests
+  -v`: PASS, all 4 including actual fake Unix HTTP framing, Host, size limits,
+  sanitized enrollment errors, profile scoping and state evidence.
+- Built `meldnet-gui-tests:local` from `scripts/linux-gui.Dockerfile` in Docker.
+  `docker run --rm --init --network none -v /Users/marhi/meldnet:/work:ro -v
+  /Users/marhi/meldnet/bin:/out -w /work meldnet-gui-tests:local xvfb-run -a
+  dbus-run-session -- python3 scripts/smoke-linux-gui.py /out/linux-gui.png`: PASS.
+  Real GTK widgets with an in-memory API fake: disconnect preserves startup,
+  startup toggle, masked/cleared join, peer copy, invalidated stale snapshots and
+  quit isolation. Screenshots `bin/linux-gui.png` and `bin/linux-gui-join.png`
+  rendered and visually inspected. No real GUI-controlled VPN was claimed.
+  Container lacks AT-SPI bus service, so accessibility-bus integration remains
+  unverified; widget accessible names/keyboard controls use native GTK.
+- Initial Docker Hub Python image pull stalled and was canceled; tests instead
+  used the cached Debian base with GTK packages. Initial Xvfb wrapper stalled as
+  container PID1; an explicit DISPLAY run passed, and final repeat with `--init`
+  passed normally. Only the created test container was removed.
+- `make macos-test`: PASS (Swift API/profile/privacy fixtures and safe TUI launcher).
+- `bash scripts/integration-linux.sh`: PASS: actual encrypted IPv4/IPv6, defaults,
+  endpoint protection, UID isolation, rollback, crash recovery, identity and
+  teardown with no daemon tools on PATH. `bash scripts/integration-multinetwork.sh`:
+  PASS: two encrypted tunnels, nested overlap rejection, scoped DNS, independent
+  disconnect/startup, crash recovery and unchanged identities. Containers only.
+- `make linux-gui windows-package`: PASS; final packaging rerun after source edits
+  also PASS. ZIP CRC checks and expected binary/DLL/license/installer entries:
+  PASS for amd64 and arm64. Wintun archive SHA-256 matched the official published
+  hash. Linux tar contents checked. Windows PowerShell/Authenticode installer
+  validation and service installation have NOT been executed on this Mac.
+- `python3 -m py_compile` for GUI/smoke/packaging scripts; `sh -n
+  scripts/install-linux.sh`; `git diff --check`: PASS. Impeccable mechanical
+  detector on the GUI returned no findings; native screenshots inspected.
+- Mobile assessment references Apple Network Extension, Android VpnService and
+  upstream WireGuard embedding documentation. First milestone should be one
+  active managed client membership, with platform-owned secrets and DNS. Android
+  needs protected underlay sockets and an in-tunnel DNS proxy; iOS needs provider
+  ownership and matchDomains. Signing, physical-device tests and native mobile
+  builds remain future implementation, not checked-in applications.
+
+## Immediate next steps and remaining platform limits
+
+1. Disposable Windows VM: execute native tests and installer; verify authorized
+   and unauthorized pipe users, LocalSystem state DACLs, real encrypted IPv4/IPv6,
+   full-tunnel endpoint protection, Wintun removal on close/crash, route recovery,
+   multi-profile isolation, NRPT activation/private misses/PTR/external edits,
+   boot/shutdown and upgrade. Windows remains experimental until these pass.
+2. Linux desktop distribution test: real GNOME/KDE/Wayland tray availability,
+   clipboard/accessibility, login launch, installer/service definition and live
+   daemon UI. Xvfb/fake API is functional/offscreen validation only. GUI depends
+   on distro GTK/PyGObject; Go daemon stays headless and CGO-free.
+3. Implement mobile managed clients following `docs/mobile-platforms.md`; no
+   iOS/Android release, app skeleton, mobile primary, or simultaneous mobile
+   memberships is claimed. Native framework/JNI pipelines need separate builds.
+4. Continue prior macOS native VPN, signing/notarization and lifecycle milestones
+   below. Windows installer currently refuses existing services/files: upgrading
+   requires an explicit administrator stop/preserve/replace/restart procedure.
 
 ## Durable architecture
 
 - `meldnetd` alone owns private keys, enrollment, persistence, embedded wireguard-go,
   TUNs, route recovery and DNS. No daemon subprocesses or presentation imports.
-  macOS and Linux releases retain CGO_ENABLED=0.
+  macOS, Linux and Windows Go releases retain CGO_ENABLED=0; Windows additionally
+  needs the official signed Wintun DLL.
 - Unix HTTP v1 is protected by kernel peer credentials, a 0600 socket, allowed UID
   and root, Host validation and Origin rejection. CLI/TUI/menu use only this API;
   quitting a frontend leaves VPNs running. No keys in public responses or logs.
@@ -87,7 +188,7 @@ The latest universal installer is `bin/Meldnet-0.1.0-universal.pkg`.
   host DNS/routes or connect a real host VPN. Install the rebuilt package to use it.
   An earlier session installed the user menu LaunchAgent. No reboot is needed.
 
-## Verification of this milestone
+## Verification of prior multi-network milestone (2026-10-04)
 
 - `gofmt -w cmd internal`; final `make check cross`: PASS. Includes go vet ./...,
   go test -race ./..., daemon dependency/subprocess checks and CGO-disabled builds

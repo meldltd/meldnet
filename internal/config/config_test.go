@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -40,13 +41,16 @@ func TestKeysAndPrivateStore(t *testing.T) {
 		t.Fatal("identity changed on reload")
 	}
 	info, _ := os.Stat(filepath.Join(dir, "node.json"))
-	if info.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Fatal("unsafe key permissions")
 	}
 	data, _ := json.Marshal(n.Public())
 	if strings.Contains(string(data), n.PrivateKey) || strings.Contains(string(data), "private_key") {
 		t.Fatal("private key exposed")
 	}
+	if runtime.GOOS == "windows" {
+		return
+	} // DACL privacy is tested in securefs on Windows.
 	if err := os.Chmod(filepath.Join(dir, "node.json"), 0644); err != nil {
 		t.Fatal(err)
 	}

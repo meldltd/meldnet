@@ -6,13 +6,16 @@ require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.0.10
 	charm.land/lipgloss/v2 v2.0.6
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/gofiber/fiber/v3 v3.5.0
+	github.com/google/uuid v1.6.0
 	github.com/miekg/dns v1.1.73
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.48.0
 	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
+	golang.zx2c4.com/wireguard/windows v0.5.3
 )
 
 require (
@@ -28,7 +31,6 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/gofiber/schema v1.8.3 // indirect
 	github.com/gofiber/utils/v2 v2.4.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
