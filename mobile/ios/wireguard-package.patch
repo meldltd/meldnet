@@ -1,0 +1,56 @@
+diff --git a/Package.swift b/Package.swift
+index 5d15a1b..48aa8d4 100644
+--- a/Package.swift
++++ b/Package.swift
+@@ -1,4 +1,4 @@
+-// swift-tools-version:5.3
++// swift-tools-version:5.5
+ // The swift-tools-version declares the minimum version of Swift required to build this package.
+ 
+ import PackageDescription
+@@ -31,6 +31,8 @@ let package = Package(
+                 "go.mod",
+                 "go.sum",
+                 "api-apple.go",
++                "meldnet-control.go",
++                "meldnetcontrol",
+                 "Makefile"
+             ],
+             publicHeadersPath: ".",
+diff --git a/Sources/WireGuardKitC/WireGuardKitC.h b/Sources/WireGuardKitC/WireGuardKitC.h
+index 54e4783..1b8974d 100644
+--- a/Sources/WireGuardKitC/WireGuardKitC.h
++++ b/Sources/WireGuardKitC/WireGuardKitC.h
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: MIT
+ // Copyright © 2018-2023 WireGuard LLC. All Rights Reserved.
+ 
++#include <sys/types.h>
+ #include "key.h"
+ #include "x25519.h"
+ 
+diff --git a/Sources/WireGuardKitGo/Makefile b/Sources/WireGuardKitGo/Makefile
+index 16cb2d5..26c05df 100644
+--- a/Sources/WireGuardKitGo/Makefile
++++ b/Sources/WireGuardKitGo/Makefile
+@@ -39,7 +39,7 @@ $(BUILDDIR)/libwg-go-$(1).a: export CGO_CFLAGS := $(CFLAGS_PREFIX) $(ARCH)
+ $(BUILDDIR)/libwg-go-$(1).a: export CGO_LDFLAGS := $(CFLAGS_PREFIX) $(ARCH)
+ $(BUILDDIR)/libwg-go-$(1).a: export GOOS := $(GOOS_$(PLATFORM_NAME))
+ $(BUILDDIR)/libwg-go-$(1).a: export GOARCH := $(GOARCH_$(1))
+-$(BUILDDIR)/libwg-go-$(1).a: $(GOROOT)/.prepared go.mod
++$(BUILDDIR)/libwg-go-$(1).a: $(GOROOT)/.prepared go.mod $(wildcard *.go) $(wildcard meldnetcontrol/*.go)
+ 	go build -ldflags=-w -trimpath -v -o "$(BUILDDIR)/libwg-go-$(1).a" -buildmode c-archive
+ 	rm -f "$(BUILDDIR)/libwg-go-$(1).h"
+ endef
+diff --git a/Sources/WireGuardKitGo/wireguard.h b/Sources/WireGuardKitGo/wireguard.h
+index fdb66c2..017a1c4 100644
+--- a/Sources/WireGuardKitGo/wireguard.h
++++ b/Sources/WireGuardKitGo/wireguard.h
+@@ -20,4 +20,7 @@ extern void wgBumpSockets(int handle);
+ extern void wgDisableSomeRoamingForBrokenMobileSemantics(int handle);
+ extern const char *wgVersion();
+ 
++extern char *meldnetControl(const char *request);
++extern void meldnetControlFree(char *response);
++
+ #endif

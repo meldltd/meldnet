@@ -1,0 +1,78 @@
+// Loopback-only synthetic control server. No VPN, host DNS, or persisted keys.
+package main
+
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"log"
+	"math/big"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+func main() {
+	result := map[string]string{}
+	for _, variant := range []string{"valid", "expired", "future", "redirect", "overflow"} {
+		public, private, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			panic("fixture key generation failed")
+		}
+		before, after := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
+		if variant == "expired" {
+			before, after = time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour)
+		}
+		if variant == "future" {
+			before, after = time.Now().Add(time.Hour), time.Now().Add(2*time.Hour)
+		}
+		template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Meldnet primary"}, NotBefore: before, NotAfter: after, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+		der, err := x509.CreateCertificate(rand.Reader, template, template, public, private)
+		if err != nil {
+			panic("fixture certificate failed")
+		}
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			panic("fixture listener failed")
+		}
+		pin := sha256.Sum256(der)
+		result[variant+"URL"] = "https://" + listener.Addr().String()
+		result[variant+"Pin"] = hex.EncodeToString(pin[:])
+		server := &http.Server{ReadHeaderTimeout: time.Second * 5, ErrorLog: log.New(io.Discard, "", 0), Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.TLS == nil || r.TLS.Version != tls.VersionTLS13 || r.Header.Get("Authorization") != "Bearer "+strings.Repeat("A", 43) {
+				w.WriteHeader(401)
+				return
+			}
+			if r.URL.Path != "/v1/network" && r.URL.Path != "/v1/register" {
+				w.WriteHeader(404)
+				return
+			}
+			switch variant {
+			case "redirect":
+				w.Header().Set("Location", "/v1/register")
+				w.WriteHeader(302)
+			case "overflow":
+				w.WriteHeader(200)
+				w.(http.Flusher).Flush()
+				io.WriteString(w, `{"padding":"`+strings.Repeat("A", 131073)+`"}`)
+			default:
+				io.WriteString(w, `{"okay":true}`)
+			}
+		})}
+		secured := tls.NewListener(listener, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: private}}})
+		go server.Serve(secured)
+	}
+	encoded, _ := json.Marshal(result)
+	if os.WriteFile(os.Args[1], encoded, 0600) != nil {
+		panic("fixture metadata failed")
+	}
+	select {}
+}

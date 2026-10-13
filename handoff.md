@@ -5,19 +5,178 @@ Updated: 2026-10-05
 ## Current milestone
 
 Independent multi-network profiles remain implemented across daemon/API/CLI/TUI
-and macOS menu app. This milestone adds experimental Windows daemon/CLI/TUI
-support and a native Linux GTK desktop/tray frontend. iOS/Android are assessed
-in `docs/mobile-platforms.md`; no mobile application is implemented.
+and macOS menu app. This milestone includes experimental Windows daemon/CLI/TUI
+support, a native Windows Win32 desktop/tray app, and a Linux GTK desktop/tray
+frontend. The initial Flutter mobile client is implemented for Android/iOS with
+separate native VPN owners, one active membership and multiple saved memberships.
+Mobile remains experimental and is not store-ready; physical-device lifecycle,
+handover and signing acceptance remain explicit release gates.
+
+## Mobile implementation checkpoint (2026-10-05)
+
+- Added `mobile/` with shared Flutter membership/join/status/peer screens, masked
+  enrollment, explicit connect/disconnect, observed-state/error handling and the
+  Meld logo/palette from meld.si. Native owners retain private keys, credentials,
+  enrollment, persistence and VPN lifecycle without a Flutter engine. Versioned
+  MethodChannel accepts typed commands and returns public state only.
+- Android 11/API30+: separate private foreground-service process, Keystore AES-GCM
+  wrapping of atomic owner-only files, upstream GoBackend Java API plus pinned
+  wireguard-go JNI. Build arm64-v8a/x86_64 with 16KiB ELF alignment. Private DNS
+  intercepts synthetic 198.18.0.53 through upstream netstack; primary queries bind
+  to the exact owned VPN Network, public queries bind to the underlay. Invalid or
+  absent VPN policy fails closed. Strict named Private DNS is rejected. Closing
+  a TUN never claims it survives owner death. No Android always-on support.
+- iOS15+: native controller/Keychain and a real embedded Packet Tunnel extension,
+  WireGuardKit/Go, primary-only split DNS/reverse zones. Enrollment is durably
+  staged and registration owned by the extension. No signing identity is selected.
+- Real enrollment uncovered system TLS incompatibility with the primary's
+  Ed25519 certificate on both Android and Apple. The shared native `control`
+  package uses standard Go TLS1.3, exact leaf SHA256/date validation, no proxy or
+  redirects, bounded responses and a total18s deadline. Android resolves with a
+  cancellable5s bound and binds sockets to the chosen underlay. Secrets remain
+  inside native owners, not Flutter responses/logs or command arguments.
+- Added `make mobile-check`, `mobile-native`, `mobile-android`, `mobile-ios-test`,
+  `mobile-ios-simulator`, `mobile-ios` and regeneration of native launcher icons.
+  Desktop backends and their CGO-disabled release pipeline remain unchanged.
+- Verification completed so far: root `make check cross` PASS (Go vet/race tests
+  and six daemon/CLI plus two Windows GUI cross-builds); `make mobile-check` PASS
+  (Flutter analyze,7 widget/model tests, native Go vet/race tests); Android
+  `:app:testDebugUnitTest :app:lintDebug` PASS (13 JVM tests; no lint errors after
+  raising API minimum for owned-VPN verification;12 warnings for pinned dependency
+  updates, legacy launcher shape and redundant resource qualifier). Native Android instrumentation
+  PASS3 tests (JNI policy guard, encrypted Keystore persistence/tamper rejection,
+  private Binder owner snapshot without Flutter).
+- Isolated Android35 arm64 emulator with16KiB pages: actual LivePrimaryTest PASS1
+  against disposable Docker primary, including enrollment, authenticated real
+  WireGuard handshake, UDP/TCP private A/NXDOMAIN, public DNS and system resolver.
+  Initial failures exposed inactive-cellular selection, TLS compatibility and a
+  test-only Docker UDP port mismatch; all corrected. Tests touch only the fresh
+  task-owned emulator/container, never host DNS/routes or a personal device.
+- Final Android `make mobile-android mobile-check` PASS. APK native libraries hash
+  match both newly built ABIs; every ELF LOAD segment has16KiB alignment. Rebuilt
+  instrumentation on the final installed APK PASS4 tests (live primary plus3
+  native tests). A first UDP datagram was intermittently lost during Android VPN
+  activation; the test now waits for VPN selection and uses bounded standard UDP
+  retransmission. Private/public TCP and system DNS also passed. Synthetic invite,
+  task-owned emulator/AVD and disposable primary were removed after disconnect.
+- Final `make mobile-ios-test` PASS: Swift protocol/profile/public-secret-isolation
+  tests plus actual Swift/C/Go TLS1.3 loopback handshake with primary-style Ed25519,
+  wrong-pin/expired/future refusal, redirect refusal, streamed response bound,
+  private-zone DNS refusal and cancellation. Final iOS simulator build PASS after
+  GoTLS integration. Final `make mobile-ios` PASS:23.7MB unsigned Runner.app and
+  `bin/Meldnet-ios-unsigned.zip`9.3MB containing PacketTunnel.appex. Verified app
+  and extension version0.1.0/build1 and actual Go transport symbols in the
+  extension; codesign confirms no signing. No actual iOS tunnel test.
+- Deliverables: `bin/Meldnet-android-debug.apk`139MB (development debug signature),
+  `bin/Meldnet-ios-unsigned.zip`9.3MB (requires app+extension provisioning), and
+  `bin/mobile-preview.png` (fixture-based UI preview, not connection evidence).
+  `git diff --check` PASS. No commits/pushes or store distribution performed.
+- Limits: no startup/on-demand/always-on, simultaneous active profiles, profile
+  removal, mobile primary hosting, full-tunnel exit routing or desktop profile
+  DNS aliases. Physical Android/iPhone handover, Doze/screen-lock/process death,
+  permission/revocation and packet-capture leak acceptance remain unfinished.
+  Next: provision app+extension for physical iPhone acceptance; exercise physical
+  Android lifecycle and hostile/offline network transitions before distribution.
 
 New artifacts: `bin/Meldnet-windows-amd64.zip`,
 `bin/Meldnet-windows-arm64.zip` and `bin/Meldnet-linux-gui.tar.gz`.
 Windows packages include official signed Wintun 0.14.1 DLLs and an explicit
-PowerShell installer. Linux payload includes GUI, desktop entry and optional
+PowerShell installer; optional NSIS setup executables are now built with
+`make windows-installer` (see the latest checkpoint below). Linux payload includes GUI, desktop entry and optional
 systemd definition/installer, with daemon binaries installed separately.
 The previous universal macOS installer remains
 `bin/Meldnet-0.1.0-universal.pkg`; this turn rebuilt the app but not that installer.
 No host service was installed/started, real host VPN connected, or host DNS/routes
-changed. All real encrypted traffic validation used disposable Linux containers.
+changed. Real encrypted traffic validation used disposable Linux containers and the
+fresh Android emulator; no personal device or host network was used.
+
+## Windows installer build addition (2026-10-05)
+
+- Added `make windows-installer` (depends on `windows-package`) and
+  `make windows-installer-test`. New artifacts:
+  `bin/Meldnet-windows-amd64-setup.exe` and
+  `bin/Meldnet-windows-arm64-setup.exe`. These are unsigned development builds.
+- `scripts/build-windows-installer.py` validates each ZIP's exact seven-file
+  payload, rejects duplicate/traversing/unexpected entries and oversized members,
+  and checks every EXE/DLL's native PE architecture. It uses NSIS 3.08+ if installed
+  (`MAKENSIS` override), otherwise the isolated Docker compiler defined by
+  `scripts/windows-installer.Dockerfile`; `--docker` forces that path. Child build
+  commands use argument arrays/timeouts. Compilation containers have no network.
+- `windows/installer.nsi` requests administrator authorization, checks native OS
+  architecture via NSIS IsWow64Process2-based macros, and requires the intended
+  individual user's SID rather than assuming the elevated administrator is the
+  VPN user. Silent installs are rejected. Only digit/hyphen SID arguments pass
+  the wizard; the existing PowerShell installer resolves/validates the account.
+- Setup protects its payload staging directory with a protected administrator/
+  System DACL and administrator ownership before extracting scripts/binaries.
+  It invokes native PowerShell with no profile and a 120-second inactivity
+  timeout, reusing the signed-Wintun and existing-install refusal checks. It
+  reports nonzero/timeout failures and does not delete partial state or services.
+  Installation now also copies the Windows README into Program Files/Meldnet.
+- Fresh install only: no uninstaller, shortcuts, implicit GUI launch/login job,
+  or automatic upgrade/rollback. Manual removal/upgrade and state-preservation
+  instructions are in the packaged README. Partial failure may leave files or a
+  service; investigate rather than deleting identities/recovery journals.
+- Verification: final `make windows-installer windows-installer-test`: PASS.
+  It ran `make cross` for all daemon/CLI targets plus both Windows GUIs, rebuilt
+  both ZIPs, compiled both setup EXEs with Docker NSIS 3.08-3+deb12u1, and passed
+  all three Python test cases (both architectures, traversal/duplicates/extras,
+  wrong architecture/malformed PE). No installer was executed.
+- `make check`: PASS (`go vet ./...`, `go test -race ./...`, formatting and daemon
+  isolation/subprocess guards; unchanged Go tests were cached). `python3 -m
+  py_compile scripts/build-windows-installer.py scripts/build-windows-package.py
+  windows/tests/test_installer.py`: PASS. `git diff --check`: PASS.
+- Actual setup archive inspection: `7zz l` recognized NSIS 3 Unicode. Inline
+  Python invoked `7zz x` in temporary directories for both setup EXEs: all seven
+  extracted payload files matched their ZIP bytes, and each PE contained the
+  requireAdministrator manifest. Extraction is NOT installer execution.
+- Next: disposable Windows x64/ARM64 acceptance for UAC, intended-user SID,
+  wrong-architecture rejection, staging ACLs, signature verification, native
+  PowerShell path, existing-install refusal, startup/failure/timeout and manual
+  recovery. NSIS build and archive checks do not establish native behavior.
+  No host service, routing, DNS or tunnel was installed/changed in this turn.
+
+## Windows desktop/tray addition (2026-10-05)
+
+- Added `cmd/meldnet-gui` with native Windows controls, a Meldnet monogram tray
+  icon, window show/hide, tray connect/disconnect, explicit quit, Explorer restart
+  recovery and visible-window fallback when tray registration fails. `--tray`
+  starts hidden; `--socket` selects a development pipe. No GUI autostart or shortcut
+  is installed. Window close hides to tray; app quit never changes daemon state.
+- Window provides independent network selection, connect/disconnect, saved
+  service-startup preference, masked enrollment with separate connect-now/startup
+  choices, public peer evidence and hostname copy. Enrollment clears on submit
+  and close. API error bodies are never displayed, logged or persisted by the GUI.
+  Requests run serially off the UI thread, capture the target profile, and refresh
+  observed state after mutation failures. Failed reads discard stale profiles.
+  Polling leaves enrollment inputs editable; mutations disable duplicate actions.
+- Reuses the authenticated v1 named-pipe client. Added portable `internal/desktop`
+  model tests for profile/action scoping, independent startup preference, ambiguous
+  join recovery, error/secret privacy, stale snapshot clearing, and simulation,
+  handshake versus control evidence (including future-timestamp rejection).
+  The daemon dependency guard now excludes desktop/TUI presentation packages.
+- Added `make windows-gui`; `make cross` and Windows packaging include the CGO-free
+  GUI executable for amd64/arm64 with Windows GUI subsystem (no console window).
+  Installer copies it alongside the existing tools; launching it never installs,
+  starts, stops or elevates the daemon. No new framework/dependency was added.
+- Verification: `gofmt -w cmd/meldnet-gui internal/desktop`; `make check cross`:
+  PASS, including `go vet ./...`, `go test -race ./...`, isolation/format guards
+  and all six daemon/CLI plus two Windows GUI cross-builds. Windows-specific
+  `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go vet ./...` and arm64 equivalent:
+  PASS. Compile-time Win32 structure size checks pass for both architectures.
+- `python3 scripts/build-windows-package.py`: PASS. Inline Python ZIP/PE checks:
+  PASS for both packages (CRC, exact seven-file payload, GUI machine architecture,
+  GUI subsystem=2, binary equality with build output and installer inclusion).
+  `git diff --check`: PASS. No host service, tunnel, routes or DNS were changed.
+- These are macOS-hosted model tests and cross-builds, NOT native Windows GUI or
+  traffic tests. No Windows screenshot, interactive tray/clipboard/accessibility,
+  Explorer recovery or installer execution is claimed. Native acceptance checklist
+  is in `windows/README.md`; use a disposable Windows 10/11 VM next. System-DPI
+  scaling is implemented; per-monitor scaling, native screen-reader behavior and
+  visual inspection remain unverified. The GUI does not configure manual peers,
+  issue invites, remove profiles or provide an Open TUI launcher. Prior encrypted
+  container tests below belong to the previous milestone and were not rerun for
+  this frontend-only change.
 
 ## Platform additions and verification (2026-10-05)
 
@@ -104,7 +263,8 @@ changed. All real encrypted traffic validation used disposable Linux containers.
    clipboard/accessibility, login launch, installer/service definition and live
    daemon UI. Xvfb/fake API is functional/offscreen validation only. GUI depends
    on distro GTK/PyGObject; Go daemon stays headless and CGO-free.
-3. Implement mobile managed clients following `docs/mobile-platforms.md`; no
+3. Implement Flutter mobile screens with native VPN owners following
+   `docs/mobile-platforms.md`, starting with the SDK/bridge feasibility spike; no
    iOS/Android release, app skeleton, mobile primary, or simultaneous mobile
    memberships is claimed. Native framework/JNI pipelines need separate builds.
 4. Continue prior macOS native VPN, signing/notarization and lifecycle milestones

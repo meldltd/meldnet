@@ -1,11 +1,54 @@
-# iOS and Android implementation assessment
+# Flutter mobile clients: architecture and acceptance
 
-Assessed 2026-10-05. These are implementation plans, not shipped mobile apps.
+Updated 2026-10-05. Initial implementations now live in `mobile/`; these are
+development clients, not production/store releases. The sections below retain
+the architecture and acceptance requirements; the current build instructions
+and verified limitations are in `mobile/README.md` and `handoff.md`.
+
+Implemented: Flutter membership/enrollment/status screens; Android native owner,
+Keystore-protected persistence, pinned control protocol and DNS-aware embedded
+WireGuard; iOS Keychain/pinned control owner and real Packet Tunnel extension with
+WireGuardKit. Both support one active membership. OS startup policies, concurrent
+memberships, mobile primary hosting and profile-qualified DNS aliases remain
+unfinished. Production signing and physical-device acceptance are still required.
 The desktop daemon cannot simply be packaged as a persistent root process on
 stock phones. Retain the existing enrollment protocol and trusted-primary relay,
 but give tunnel lifetime, secrets and OS integration to the platform's VPN
 extension/service. Closing a screen must leave that owner running. Native VPN
 permission prompts remain necessary; UI code cannot grant them itself.
+
+## Decision: shared Flutter UI, platform-owned VPN
+
+Use Flutter/Dart for new client screens and presentation state on Android and
+iOS. This replaces the earlier proposal for separate Kotlin and SwiftUI screens.
+Flutter officially supports both targets and platform channels can connect Dart
+to native adapters. All existing desktop frontends, including macOS, are outside
+this plan and remain unchanged.
+This is an architectural recommendation for Meldnet: shared enrollment,
+membership and peer screens reduce duplicated UI work, while native adapters
+retain the existing security and lifecycle boundaries. Flutter adds a toolchain,
+engine footprint and plugin maintenance; it does not remove native VPN work.
+
+| Target | Shared UI | Networking owner and adapter |
+| --- | --- | --- |
+| Android first | Flutter | Kotlin bridge to one VpnService with upstream WireGuard backend |
+| iOS next | Flutter | Swift bridge to a signed Packet Tunnel extension with WireGuardKit |
+
+Keep Dart limited to public models, screen validation and typed user intent.
+Use a small versioned platform-channel contract (prefer Pigeon-generated types)
+for memberships, enrollment, connect/disconnect, startup preference and status.
+Platform channels reach the host app; native Binder/provider IPC must still reach
+the independent VPN owner. The owner validates every mutation and performs key
+generation, persistence, pinned enrollment, reconciliation and networking without
+a Flutter engine. Never put private keys or device credentials in Dart or channel
+responses. Enrollment input may cross once, is cleared on submit, and must not
+appear in errors or telemetry. Reopening the UI reloads observed owner state;
+late replies cannot overwrite a different selected membership.
+
+Keep platform capabilities explicit: mobile activates one membership at a time.
+OS always-on/on-demand policies are distinct
+from saved startup preference. Do not choose a generic Flutter VPN plugin that
+takes ownership away from these adapters or passes raw WireGuard keys through UI.
 
 ## Shared product and protocol
 
@@ -45,7 +88,7 @@ membership must not be accidentally collapsed into one shared WireGuard key.
 
 ## iOS
 
-Build a SwiftUI app and a signed Network Extension target whose
+Build a Flutter app with a Swift platform adapter and a signed Network Extension target whose
 `NEPacketTunnelProvider` owns the tunnel. `NETunnelProviderManager` stores the
 public system VPN configuration and requests user approval. App-to-provider
 messages expose a narrow, versioned command/status envelope analogous to local
@@ -86,11 +129,12 @@ Extension capability with packet-tunnel-provider entitlement, explicit access
 and App Group entitlements where used, real iPhone testing and App Store review.
 WireGuardKit's bridge uses native linkage: desktop's CGO-disabled release policy
 continues for desktop, but an iOS framework requires its own documented build
-and signing pipeline. No iOS target or entitled app is created in this change.
+and signing pipeline. The initial project now has an entitled Packet Tunnel
+target and unsigned builds; no provisioned device or store release is claimed.
 
 ## Android
 
-Build a Kotlin app plus an Android `VpnService`, protected by
+Build a Flutter app with a Kotlin platform adapter plus an Android `VpnService`, protected by
 `android.permission.BIND_VPN_SERVICE` and advertised by the
 `android.net.VpnService` intent action. Call `VpnService.prepare()` and complete
 the system consent flow, then let the service own persistence, reconnection and
@@ -135,22 +179,45 @@ not host resolver-file journaling.
 
 ## Delivery order and acceptance
 
-1. Introduce platform-neutral managed-client protocol fixtures (synthetic secrets),
+1. Pin the Flutter SDK and upstream backend versions, recording supported mobile
+   OS/SDK versions and architectures; prove Android native linkage
+   and iOS extension signing/build feasibility before investing in full screens.
+   Define the typed UI/owner contract and capability model. Introduce
+   platform-neutral managed-client protocol fixtures (synthetic secrets),
    pinned TLS enrollment, credential recovery and revocation tests. Decide whether
    shared Go control logic or native clients will own those transitions.
-2. Deliver one Android managed client against the existing Linux primary using
+2. Deliver a minimal Flutter Android client against the existing Linux primary using
    the upstream embedded backend; exercise service/background and DNS behavior
    on an emulator and physical device. Then implement the equivalent iOS provider.
-3. Add the native screens: memberships, masked enrollment, observed connect state,
+3. Complete shared Flutter screens: memberships, masked enrollment, observed connect state,
    peers/hostnames, separate startup preference and explicit profile switch.
 4. Verify real encrypted client-to-primary and relayed client traffic, private DNS
    no-leak behavior, invalid/expired certificate pins, permission denial/revoke,
    process death, restart without UI, Wi-Fi/cellular handover, screen lock/Doze,
    stale control status and identity continuity. OS indicators alone are not proof.
-5. Only after those gates consider concurrent memberships, always-on/on-demand,
+5. Only after those gates consider concurrent mobile memberships, always-on/on-demand,
    battery optimization and store distribution. No mobile primary-hosting claim.
 
+Add Dart widget/model tests for masked-and-cleared enrollment, stale replies,
+capability-dependent controls and evidence labels. Native contract tests must
+verify independent validation and no secret-bearing responses. Kill the Flutter
+UI/engine separately from the VPN owner in device acceptance: UI exit must not
+disconnect, whereas owner death must never be reported as a surviving tunnel.
+Build/test each native target separately; desktop `make cross` does not validate
+Flutter, Android JNI or Apple extensions. The initial project and native builds
+now exist; consult the current handoff for actual test results. Builds and
+in-memory tests do not replace physical-device traffic/lifecycle acceptance.
+
 ## Authoritative references
+
+Checked 2026-10-05:
+
+- [Flutter supported platforms](https://docs.flutter.dev/reference/supported-platforms)
+  lists supported Android and iOS versions and architectures.
+- [Flutter platform channels](https://docs.flutter.dev/platform-integration/platform-channels)
+  documents native bridges and Pigeon-generated typed messaging.
+- [Apple provider deployment](https://developer.apple.com/documentation/technotes/tn3134-network-extension-provider-deployment)
+  describes Network Extension packaging and deployment requirements.
 
 - [WireGuard embedding guidance](https://www.wireguard.com/embedding/) names
   WireGuardKit for Apple and the Android tunnel library for embedding.

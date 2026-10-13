@@ -162,7 +162,7 @@ service supervision is recommended. No host resolver changes occur in simulation
 
 Direct connectivity/NAT traversal, seamless peer reconciliation, network ACLs,
 certificate/credential rotation, IPv6 allocation, endpoint mobility, signed installers,
-and mobile frontends remain future work. Windows native acceptance testing
+and production mobile distribution remain future work. Windows native acceptance testing
 and Linux desktop distribution testing remain required. Manual IPv4/IPv6 peers and
 full-tunnel routes still work independently. No exit-node, NAT, or kill-switch
 provisioning is included.
@@ -279,8 +279,58 @@ state. The GTK/Python presentation dependencies never enter Go daemon packages.
 The desktop entry and optional systemd unit are packaged separately; installing
 or activating a real service is an explicit administrator step.
 
-Mobile has been assessed in `docs/mobile-platforms.md`. iOS needs a signed
-Packet Tunnel Network Extension with WireGuardKit; Android needs an OS-controlled
-VpnService with the upstream embedded backend. Neither is a packaged desktop
-daemon or an implemented feature. Start with one active managed membership and
-platform-owned DNS/secret persistence; preserve trusted-primary relay semantics.
+The iOS/Android Flutter clients live in `mobile/`, with public screens and a
+versioned MethodChannel defined in `mobile/docs/bridge-v1.md`. Native owners retain
+keys, credentials, validation, enrollment and tunnel lifetime independently of
+Flutter. Android uses a private service process and the upstream GoBackend API
+with the mobile-specific DNS adapter in `mobile/native`; iOS uses an embedded
+Packet Tunnel target with pinned WireGuardKit. Multiple identities can be saved,
+but only one mobile membership is active. Native startup/always-on/on-demand are
+not advertised. Desktop frontends and CGO-disabled daemon builds are unchanged.
+See `mobile/README.md` and `docs/mobile-platforms.md` for build/acceptance limits.
+
+
+## Windows desktop frontend
+
+`cmd/meldnet-gui` provides a native Win32 window and notification-area icon using
+built-in Windows DLLs and the existing Go Windows bindings; no GUI framework or
+CGO dependency is introduced. `internal/desktop` contains portable presentation
+and action logic, tested with an in-memory public-API fake. Only the frontend
+imports it; the daemon and service remain presentation-independent.
+
+The app reuses `api.Client` and its privileged-server-verified named pipe. A
+single background request is in flight at a time, with results posted to the UI
+thread. Every mutation captures its profile ID and refreshes profiles even after
+failure; failed reads invalidate the old snapshot. GUI errors never reflect raw
+API errors or enrollment input. The masked enrollment control clears on submit
+and close; the GUI does not persist secrets. Connect and saved startup preference
+are independent. Peer labels distinguish real handshake, control activity,
+stale directory, disconnected and simulated states. Only public hostnames are
+copied. Window close hides to the tray; explicit app quit never mutates daemon
+state. If tray registration fails, the window remains accessible. Explorer
+restart re-registers the icon. Native Windows visual, accessibility, DPI, clipboard
+and lifecycle acceptance remains required; cross-builds are not native UI tests.
+
+
+The optional `make windows-installer` target wraps the verified architecture ZIPs
+in NSIS setup executables. The build compiler is separate from the application
+runtime and can run in an isolated Docker container. Setup explicitly elevates,
+requires an individual account SID, checks native architecture, protects staging,
+and calls the existing PowerShell installer through native PowerShell with a
+bounded inactivity timeout. It preserves the fresh-install-only boundary: existing
+services/files are refused, failures do not delete state, and no GUI launch or
+uninstaller is implicit. Native installer lifecycle and ACL acceptance must still
+be tested on disposable Windows machines; compiling setup does not validate them.
+
+
+## Android mobile DNS adapter
+
+The stock Android GoBackend cannot provide per-zone DNS. The mobile-only JNI
+backend therefore wraps its OS TUN and intercepts `198.18.0.53/32` DNS traffic
+before WireGuard encryption. The upstream gVisor netstack handles TCP/UDP; the
+proxy sends private forward/reverse zones only to the primary VPN authority and
+binds public DNS sockets to the captured underlay Network handle. No private miss
+falls through to a public resolver. Policy is validated natively before activation,
+and incompatible strict Private DNS is refused. JNI returns only filtered public
+WireGuard stats; it exposes no UAPI socket or backend logs. This is a separate
+CGO-enabled mobile build, not a change to the desktop daemon or cryptography.

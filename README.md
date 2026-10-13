@@ -1,7 +1,7 @@
 # Meldnet
 
 A Go VPN service with a separate Bubble Tea terminal client for macOS, Linux
-and experimental Windows builds, a native macOS menu app and a Linux GTK desktop
+and experimental Windows builds, a native macOS menu app, a Windows desktop/tray app and a Linux GTK desktop
 interface. The VPN lives in `meldnetd`; closing a frontend does not disconnect it.
 All frontends use the same versioned local API.
 
@@ -40,6 +40,17 @@ masked enrollment, independent startup preferences and hostname copying. Launch
 The GUI never starts a privileged service. `make linux-gui-test` tests its public
 API/model behavior; Linux additionally tests real local peer credentials.
 
+`make windows-gui` builds the native Windows window/tray app. Open
+`meldnet-gui.exe` as the authorized user, or add `--tray` to start in the
+notification area. It offers per-network connect/startup controls, masked join,
+and public peer status/hostname copying. Closing hides to tray; quitting leaves
+the independently installed VPN service running.
+
+`make windows-installer` builds x64 and ARM64 setup executables in `bin/`,
+using NSIS 3.08+ or an isolated Docker compiler. Setup requests administrator
+access and the authorized user SID. It supports fresh installs; upgrades remain
+explicit. See the Windows instructions below for details.
+
 `make windows-package` creates `bin/Meldnet-windows-{amd64,arm64}.zip`, including
 CGO-free binaries and a checksum-pinned official Wintun DLL. See
 [Windows installation and limitations](windows/README.md) for the explicit
@@ -47,9 +58,13 @@ administrator installer, authorized user SID and LocalSystem service. Windows
 is experimental pending native VM tests of IPC, ACLs, routing, driver lifetime,
 DNS and installer behavior. Cross-compilation does not prove encrypted traffic.
 
-[iOS and Android implementation assessment](docs/mobile-platforms.md) covers
-native VPN ownership, upstream WireGuard embedding, secrets, DNS and background
-lifecycle. Mobile applications are not implemented in this milestone.
+[Meldnet mobile](mobile/README.md) now contains the shared Flutter Android/iOS
+app, native Android VPN owner and iOS Packet Tunnel extension. Build a development
+Android APK with `make mobile-android`, or an unsigned iOS app with `make mobile-ios`.
+The first version supports one active managed membership, masked enrollment and
+public device status. Physical-device acceptance and production signing remain
+required; this is not a store release. See the [mobile architecture and acceptance
+plan](docs/mobile-platforms.md) for remaining platform work.
 
 ## macOS menu bar and automatic startup
 
@@ -77,7 +92,7 @@ Networks marked for auto-connect reconnect after boot; other networks stay disco
 not use this default installer for a daemon with custom paths.
 
 For just the menu app, use `./scripts/install-macos.sh --menu-only`. To build/test
-without installing anything, use `make macos-test`. Linux also has a GTK desktop/tray app; Windows has daemon/CLI/TUI builds. See [service setup and removal](docs/services.md).
+without installing anything, use `make macos-test`. Linux also has a GTK desktop/tray app; Windows has a native desktop/tray app alongside daemon/CLI/TUI builds. See [service setup and removal](docs/services.md).
 
 ## Build a macOS installer
 

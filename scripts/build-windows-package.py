@@ -22,7 +22,7 @@ with zipfile.ZipFile(io.BytesIO(data)) as driver:
     for arch in ('amd64', 'arm64'):
         target = root / 'bin' / f'Meldnet-windows-{arch}.zip'
         with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as archive:
-            for binary in ('meldnet.exe', 'meldnetd.exe'):
+            for binary in ('meldnet.exe', 'meldnetd.exe', 'meldnet-gui.exe'):
                 archive.write(root / 'bin' / f'windows-{arch}' / binary, binary)
             archive.writestr('wintun.dll', driver.read(f'wintun/bin/{arch}/wintun.dll'))
             archive.writestr('WINTUN-LICENSE.txt', driver.read('wintun/LICENSE.txt'))

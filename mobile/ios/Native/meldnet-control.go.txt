@@ -1,0 +1,29 @@
+package main
+
+// #include <stdlib.h>
+import "C"
+
+import (
+	"encoding/json"
+	"syscall"
+	"unsafe"
+
+	"golang.zx2c4.com/wireguard/apple/meldnetcontrol"
+)
+
+// iOS provider-owned sockets use the Network Extension's underlay. The Swift
+// adapter resolves system addresses and rejects destinations in the VPN pool.
+//
+//export meldnetControl
+func meldnetControl(input *C.char) *C.char {
+	data := []byte(C.GoString(input))
+	response := control.Do(data, func(uint64) func(string, string, syscall.RawConn) error { return nil })
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return C.CString(`{"status":0}`)
+	}
+	return C.CString(string(encoded))
+}
+
+//export meldnetControlFree
+func meldnetControlFree(value *C.char) { C.free(unsafe.Pointer(value)) }

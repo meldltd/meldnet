@@ -11,7 +11,7 @@ $target = Join-Path $env:ProgramFiles 'Meldnet'
 if (Test-Path $target) {
     if ((Get-Item $target).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Installation directory must not be a reparse point.' }
 }
-foreach ($file in @('meldnet.exe', 'meldnetd.exe', 'wintun.dll', 'WINTUN-LICENSE.txt')) {
+foreach ($file in @('meldnet.exe', 'meldnetd.exe', 'meldnet-gui.exe', 'wintun.dll', 'WINTUN-LICENSE.txt', 'README.md')) {
     $source = Join-Path $PSScriptRoot $file
     if (-not (Test-Path $source -PathType Leaf)) { throw "Missing package file: $file" }
     if ((Get-Item $source).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Package files must not be reparse points.' }
@@ -29,7 +29,7 @@ if (Test-Path $target) {
 } else {
     $null = [IO.Directory]::CreateDirectory($target, $acl)
 }
-foreach ($file in @('meldnet.exe', 'meldnetd.exe', 'wintun.dll', 'WINTUN-LICENSE.txt')) {
+foreach ($file in @('meldnet.exe', 'meldnetd.exe', 'meldnet-gui.exe', 'wintun.dll', 'WINTUN-LICENSE.txt', 'README.md')) {
     $source = Join-Path $PSScriptRoot $file
     if (-not (Test-Path $source -PathType Leaf)) { throw "Missing package file: $file" }
     if ((Get-Item $source).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Package files must not be reparse points.' }
@@ -39,4 +39,4 @@ foreach ($file in @('meldnet.exe', 'meldnetd.exe', 'wintun.dll', 'WINTUN-LICENSE
 $binary = '"' + (Join-Path $target 'meldnetd.exe') + '" --allow-sid ' + $sid.Value
 New-Service -Name Meldnet -DisplayName 'Meldnet VPN' -BinaryPathName $binary -StartupType Automatic -Description 'Independent Meldnet VPN daemon' | Out-Null
 Start-Service -Name Meldnet
-Write-Output 'Meldnet service installed. Run meldnet.exe as the authorized user. Private state belongs to LocalSystem in ProgramData; GUI/TUI exit does not stop the service.'
+Write-Output 'Meldnet service installed. Run meldnet-gui.exe (desktop/tray) or meldnet.exe as the authorized user. Private state belongs to LocalSystem in ProgramData; GUI/TUI exit does not stop the service.'
