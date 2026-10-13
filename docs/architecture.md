@@ -92,7 +92,10 @@ one client /32 and learns its UDP endpoint from authenticated inbound traffic.
 `vpn/relay.go` wraps the primary's TUN. Authenticated packets to the primary's VPN
 IP go to the OS; packets between enrolled clients return to WireGuard for encryption
 to their destination. Unknown source/destination traffic is dropped. IPv4 TTL is
-decremented and checksum repaired. Queues are bounded; congestion drops packets.
+decremented and checksum repaired. Queued packets return to WireGuard in batches
+without waiting to fill them; primary-bound batches preserve native Linux GRO.
+Queues are bounded; congestion drops packets. See `performance.md` for isolated
+throughput measurement and deployment diagnostics.
 Host IP forwarding is unnecessary. The primary sees plaintext transit packets and
 must be trusted; this topology is not an end-to-end client mesh.
 

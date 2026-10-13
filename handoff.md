@@ -1,8 +1,15 @@
 # Meldnet handoff
 
-Updated: 2026-10-05
+Updated: 2026-10-14
 
 ## Current milestone
+
+Relay performance investigation: the user reports a remote Linux primary with
+macOS clients, 100–200 kbps through Meldnet versus 10–15 MB/s directly between
+the Macs (confirmed by the user; not a Mac-to-primary measurement). The full
+400–1,200x gap (if kbps literally means kilobits/s) is NOT reproduced or resolved.
+A confirmed batching inefficiency is fixed; isolated encrypted Linux throughput
+improves about 48–56%. Native deployment diagnosis is the next step.
 
 Independent multi-network profiles remain implemented across daemon/API/CLI/TUI
 and macOS menu app. This milestone includes experimental Windows daemon/CLI/TUI
@@ -177,6 +184,63 @@ fresh Android emulator; no personal device or host network was used.
   issue invites, remove profiles or provide an Open TUI launcher. Prior encrypted
   container tests below belong to the previous milestone and were not rerun for
   this frontend-only change.
+
+## Relay batching and performance verification (2026-10-14)
+
+- Primary `relayTUN.Read` drains queued packets into the supplied batch, without
+  waiting for a full batch. `BatchSize` preserves the native TUN value. Host-bound
+  packets are grouped up to the underlying write limit, retaining Linux GRO and
+  respecting single-packet Darwin/Windows writes. No peer topology, MTU, queue
+  limit, authentication, TTL, or cryptographic implementation changed.
+- Regression tests cover native write limits (1/4/128), partial read batches,
+  packet contents/TTL, write error propagation, invalid read buffers and closed
+  reads. Existing membership/TTL/checksum tests remain. All network unit tests
+  use fakes; no host tunnel, DNS, routing, or service was changed.
+- `gofmt -w internal/vpn/relay.go internal/vpn/relay_test.go
+  internal/vpn/relay_benchmark_test.go`: PASS.
+  Final `make check cross`: PASS, including `go vet ./...`,
+  `go test -race ./...`, isolation/format guards, CGO-free daemon/CLI builds for
+  Darwin/Linux/Windows amd64/arm64. Cross-compilation is not native testing.
+- `bash scripts/integration-primary.sh`: PASS: actual encrypted relay across
+  isolated client networks, enrollment, private DNS UDP/TCP/PTR, OS resolution,
+  upstream preservation, cleanup/crash recovery and revocation. Containers only.
+- Added `scripts/benchmark-throughput.sh`: disposable isolated primary + two
+  clients, real WireGuard TCP, primary kernel forwarding disabled, daemon PATH
+  without external tools. The benchmark uses test-only iperf3 and preserves JSON.
+  `bash -n scripts/benchmark-throughput.sh` and `git diff --check`: PASS.
+- Initial `BENCH_SECONDS=5 BENCH_OUTPUT=bin/throughput-before
+  scripts/benchmark-throughput.sh`: PASS; direct 102900.7, primary 4265.5,
+  relay 1531.3, reverse relay 1292.9 Mbit/s. First patched run with output
+  `bin/throughput-after` overlapped builds and was discarded as a comparison
+  (direct 61178.6, primary 2612.1, relay 778.5, reverse 500.2 Mbit/s).
+- Clean patched run: `BENCH_SECONDS=10 BENCH_OUTPUT=bin/throughput-after-idle
+  scripts/benchmark-throughput.sh`: PASS. Direct 102192.3, primary 6260.8,
+  relay 2244.5, reverse relay 2313.0 Mbit/s. Forward relay 991 retransmissions.
+- Clean old-code run used `GOFLAGS=-overlay=/var/folders/n1/0_7rfpld6kb1y8p91d2yxjd40000gn/T/meldnet-baseline-57c31bz4/overlay.json
+  BENCH_SECONDS=10 BENCH_OUTPUT=bin/throughput-before-idle
+  scripts/benchmark-throughput.sh`. Overlay replaced only relay.go with its
+  committed HEAD contents; working-tree source remained patched. PASS on retry:
+  direct 102235.7, primary 4607.6, relay 1512.5, reverse 1484.0 Mbit/s; forward
+  relay 750 retransmissions. First attempt failed because the running shell
+  script was edited during execution (line offset changed); no results claimed
+  from it. Final `make check cross` restored patched binaries after the baseline.
+- These are individual 10-second local Docker bridge runs, not repeated WAN or
+  native Mac benchmarks. Virtual direct rates do not represent physical NIC
+  capacity. Retransmissions remain; no claim that batching eliminates loss.
+- `go test ./internal/vpn -run '^$' -bench BenchmarkRelayTransit -benchmem
+  -count=3`: PASS. Final bookkeeping-only runs: 29.7/30.3/33.9 us per burst of
+  128x1200 bytes; 163840 B and 128 allocations per burst. This does not measure
+  encryption or demonstrate a bookkeeping speedup; throughput evidence is above.
+- `docs/performance.md` documents path comparisons and isolated reproduction.
+  The daemon binaries were rebuilt, but existing installer/ZIP/tar packages were
+  NOT regenerated for this change, and the user's remote primary was NOT updated.
+
+Next: measure each Mac to the remote primary's public address and VPN address,
+in both directions with the same TCP workload, then Mac-to-Mac VPN. Capture
+latency, retransmissions, primary CPU and interface drops. The direct test was
+Mac-to-Mac, so it does not measure the remote relay path. Transfer application
+and kbps/KBps units still need confirmation. Deployment
+of the patched primary and native Mac/WAN validation remain unfinished.
 
 ## Platform additions and verification (2026-10-05)
 

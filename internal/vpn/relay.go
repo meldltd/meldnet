@@ -58,21 +58,50 @@ func (r *relayTUN) readHost() {
 		}
 	}
 }
-func (r *relayTUN) BatchSize() int { return 1 }
+
+// Preserve the native batch size so Linux can amortize encryption and UDP I/O.
+func (r *relayTUN) BatchSize() int { return r.Device.BatchSize() }
 func (r *relayTUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
+	if len(bufs) == 0 || len(sizes) < len(bufs) || offset < 0 {
+		return 0, io.ErrShortBuffer
+	}
 	select {
 	case <-r.done:
 		return 0, io.EOF
-	case p := <-r.packets:
-		if len(bufs) == 0 || len(bufs[0])-offset < len(p) {
-			return 0, io.ErrShortBuffer
-		}
-		sizes[0] = copy(bufs[0][offset:], p)
-		return 1, nil
+	default:
 	}
+	var p []byte
+	select {
+	case <-r.done:
+		return 0, io.EOF
+	case p = <-r.packets:
+	}
+	for i := range bufs {
+		if offset > len(bufs[i]) || len(bufs[i])-offset < len(p) {
+			return i, io.ErrShortBuffer
+		}
+		sizes[i] = copy(bufs[i][offset:], p)
+		if i+1 == len(bufs) {
+			return i + 1, nil
+		}
+		// Drain queued packets without waiting to fill a batch: sparse traffic
+		// must not pay extra latency for throughput optimization.
+		select {
+		case p = <-r.packets:
+		default:
+			return i + 1, nil
+		}
+	}
+	return 0, nil
 }
 func (r *relayTUN) Write(bufs [][]byte, offset int) (int, error) {
+	// Keep host-bound packets together for native Linux GRO. Other platforms
+	// may accept only one packet per write, so honor the underlying limit.
+	var host [][]byte
 	for i, b := range bufs {
+		if offset < 0 || offset > len(b) {
+			return i, io.ErrShortBuffer
+		}
 		p := b[offset:]
 		if len(p) < 20 || p[0]>>4 != 4 {
 			continue
@@ -83,8 +112,15 @@ func (r *relayTUN) Write(bufs [][]byte, offset int) (int, error) {
 			continue
 		}
 		if dst == r.local {
-			if _, err := r.Device.Write([][]byte{b}, offset); err != nil {
-				return i, err
+			if host == nil {
+				host = make([][]byte, 0, min(len(bufs), r.Device.BatchSize()))
+			}
+			host = append(host, b)
+			if len(host) == cap(host) {
+				if _, err := r.Device.Write(host, offset); err != nil {
+					return i, err
+				}
+				host = host[:0]
 			}
 			continue
 		}
@@ -100,6 +136,11 @@ func (r *relayTUN) Write(bufs [][]byte, offset int) (int, error) {
 		case <-r.done:
 			return i, io.EOF
 		default: /* bounded packet loss under congestion */
+		}
+	}
+	if len(host) > 0 {
+		if _, err := r.Device.Write(host, offset); err != nil {
+			return 0, err
 		}
 	}
 	return len(bufs), nil

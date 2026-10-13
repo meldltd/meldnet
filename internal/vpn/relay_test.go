@@ -2,10 +2,13 @@ package vpn
 
 import (
 	"encoding/binary"
-	"golang.zx2c4.com/wireguard/tun"
+	"errors"
+	"fmt"
 	"io"
-	"meldnet/internal/config"
 	"testing"
+
+	"golang.zx2c4.com/wireguard/tun"
+	"meldnet/internal/config"
 )
 
 func TestRelayTTLAndChecksum(t *testing.T) {
@@ -86,5 +89,106 @@ func TestRelayRestrictsTrafficToMembers(t *testing.T) {
 	_, _ = r.Write([][]byte{packet(2, 99), packet(99, 3)}, 16)
 	if len(r.packets) != 0 || f.writes != 1 {
 		t.Fatal("relayed unknown source or destination")
+	}
+}
+
+// A Linux-like fake records batch boundaries without touching host networking.
+type batchRelayFake struct {
+	relayFake
+	batch   int
+	batches []int
+	err     error
+}
+
+func (f *batchRelayFake) BatchSize() int { return f.batch }
+func (f *batchRelayFake) Write(b [][]byte, _ int) (int, error) {
+	f.batches = append(f.batches, len(b))
+	return len(b), f.err
+}
+func TestRelayBatching(t *testing.T) {
+	for _, batch := range []int{1, 4, 128} {
+		t.Run(fmt.Sprint(batch), func(t *testing.T) {
+			f := &batchRelayFake{relayFake: relayFake{done: make(chan struct{})}, batch: batch}
+			r := newRelayTUN(f, &config.Node{Settings: config.Settings{Addresses: []string{"10.77.0.1/32"}, Peers: []config.Peer{{AllowedIPs: []string{"10.77.0.2/32"}}, {AllowedIPs: []string{"10.77.0.3/32"}}}}})
+			defer r.Close()
+			if r.BatchSize() != batch {
+				t.Fatal("lost native batch size")
+			}
+			var packets [][]byte
+			for i := 0; i < 9; i++ {
+				b := make([]byte, 36)
+				p := b[16:]
+				p[0] = 0x45
+				p[8] = 64
+				binary.BigEndian.PutUint16(p[2:4], 20)
+				copy(p[12:20], []byte{10, 77, 0, 2, 10, 77, 0, 1})
+				packets = append(packets, b)
+			}
+			if _, err := r.Write(packets, 16); err != nil {
+				t.Fatal(err)
+			}
+			total := 0
+			for _, n := range f.batches {
+				if n > batch {
+					t.Fatal("exceeded native limit")
+				}
+				total += n
+			}
+			if total != 9 || len(f.batches) != (9+batch-1)/batch {
+				t.Fatalf("bad host batches: %v", f.batches)
+			}
+			for _, p := range packets {
+				p[35] = 3
+			}
+			if _, err := r.Write(packets, 16); err != nil {
+				t.Fatal(err)
+			}
+			out := make([][]byte, 128)
+			sizes := make([]int, 128)
+			for i := range out {
+				out[i] = make([]byte, 36)
+			}
+			// Must return the nine queued packets immediately, without waiting
+			// for the rest of this 128-packet receive batch.
+			n, err := r.Read(out, sizes, 16)
+			if err != nil || n != 9 {
+				t.Fatalf("read = %d, %v", n, err)
+			}
+			for i := 0; i < n; i++ {
+				if sizes[i] != 20 || out[i][24] != 63 || out[i][35] != 3 {
+					t.Fatal("corrupted batch packet")
+				}
+			}
+			f.err = errors.New("host write failed")
+			packets[0][35] = 1
+			if _, err := r.Write(packets[:1], 16); !errors.Is(err, f.err) {
+				t.Fatalf("lost host error: %v", err)
+			}
+		})
+	}
+}
+func TestRelayReadBoundsAndClose(t *testing.T) {
+	f := &relayFake{done: make(chan struct{})}
+	r := newRelayTUN(f, &config.Node{Settings: config.Settings{Addresses: []string{"10.77.0.1/32"}}})
+	for _, tc := range []struct {
+		bufs   [][]byte
+		sizes  []int
+		offset int
+	}{
+		{nil, nil, 0}, {[][]byte{make([]byte, 20)}, nil, 0}, {[][]byte{make([]byte, 20)}, make([]int, 1), -1},
+	} {
+		if _, err := r.Read(tc.bufs, tc.sizes, tc.offset); !errors.Is(err, io.ErrShortBuffer) {
+			t.Fatal(err)
+		}
+	}
+	r.packets <- make([]byte, 20)
+	if _, err := r.Read([][]byte{make([]byte, 20)}, make([]int, 1), 16); !errors.Is(err, io.ErrShortBuffer) {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Read([][]byte{make([]byte, 20)}, make([]int, 1), 0); !errors.Is(err, io.EOF) {
+		t.Fatal(err)
 	}
 }
