@@ -1,8 +1,16 @@
 # Meldnet handoff
 
-Updated: 2026-10-14
+Updated: 2026-10-17
 
 ## Current milestone
+
+Mobile DNS follow-up: the user reports the updated signed iPhone build 2 works
+following installation/launch and the requested `imac.meldnet.internal` retest.
+Host rows now show VPN IPs. This is user-reported physical-device acceptance,
+not an independently captured DNS test. Primary-profile-qualified DNS aliases
+are implemented in source but still require primary deployment. The earlier
+relay-performance milestone below remains unfinished.
+
 
 Relay performance investigation: the user reports a remote Linux primary with
 macOS clients, 100–200 kbps through Meldnet versus 10–15 MB/s directly between
@@ -18,6 +26,175 @@ frontend. The initial Flutter mobile client is implemented for Android/iOS with
 separate native VPN owners, one active membership and multiple saved memberships.
 Mobile remains experimental and is not store-ready; physical-device lifecycle,
 handover and signing acceptance remain explicit release gates.
+
+## Mobile host IPs and DNS follow-up (2026-10-17)
+
+- User reports only private iPhone names fail (`smt.meldnet.internal` and
+  `smt.default.meldnet.internal`); the same host's VPN IP works and public DNS
+  continues to work. Follow-up confirms both forms resolve on desktop, iPhone
+  displays `ready`, and the real name `imac.meldnet.internal` fails on iPhone.
+- Shared Flutter host rows now display both hostname and a labeled VPN IP,
+  including address-only records. Existing hostname copying and evidence labels
+  are preserved. Widget expectations and narrow-screen/large-text fixtures now
+  include peer IPs; neither Flutter nor its bridge receives new private data.
+- Confirmed independent DNS bug: desktop aggregate DNS served profile-qualified
+  names, but the primary's VPN authority did not. The primary slot now supplies
+  its local profile qualifier to its authority, serving both `host.meldnet.internal`
+  and `host.default.meldnet.internal`. Local aggregate inputs remain unqualified,
+  avoiding double qualification and preserving cross-profile ambiguity rules.
+  This requires updating the PRIMARY binary, not just the iOS app. No remote
+  deployment, personal VPN connection, host resolver/routing changes or signing
+  was performed. Mobile-local membership aliases remain unsupported.
+- Regression tests exercise the actual slot-to-authority configuration over
+  loopback UDP/TCP, both spellings, AAAA/HTTPS NODATA, private NXDOMAIN, public
+  REFUSED, enrolled-source admission, removal, qualifier validation and unchanged
+  legacy PTRs. Integration coverage adds qualified queries over encrypted tunnels
+  and confirms qualified aliases disappear on revocation.
+- Exact verification: `gofmt -w internal/privatedns/zone.go
+  internal/privatedns/hub.go internal/privatedns/multi_test.go`; final
+  `make check cross`: PASS (`go vet ./...`, `go test -race ./...`, format/isolation
+  guards, daemon/CLI Darwin/Linux/Windows amd64/arm64 and both Windows GUI builds).
+  Cross-compilation is not native device testing. `make mobile-ios-test`: PASS
+  (native Swift validation/secret isolation and real loopback Swift/C/Go TLS).
+- Earlier `make mobile-check` and `make mobile-ios`: BLOCKED by installed Dart 3.12.2
+  versus checked-in `sdk: ^3.13.1`; superseded by the successful isolated-SDK
+  build in the iOS follow-up below.
+  Repository SDK requirement and lockfile were preserved. In a temporary source
+  copy `/var/folders/n1/0_7rfpld6kb1y8p91d2yxjd40000gn/T/meldnet-mobile-check-6yj4c370`,
+  changed ONLY the temporary SDK bound to ^3.12.2, then ran
+  `flutter pub get && flutter analyze && flutter test`: PASS, no analyzer issues,
+  7 tests. That temporary resolution chose six older SDK test dependencies, so
+  this is compatibility evidence, not validation with the repository lockfile.
+  Formatting-only changes outside the edited UI/test blocks were removed later.
+- In `mobile/native`, `go vet ./...` passed. The first `go test -race ./...`
+  stalled and was terminated; a repeat completed PASS (control and dnsbridge).
+  A bounded targeted DNS policy/no-fallback run also passed:
+  `go test -race ./dnsbridge -run 'TestPolicy|TestPrivateMissAndFailureNeverFallThrough|TestPublicUsesUnderlay|TestPrivateWithoutVPNNeverDials|TestInvalidJSONClearsPartialPolicy' -timeout 30s`.
+- `bash -n scripts/integration-primary.sh`: PASS. The direct
+  `bash scripts/integration-primary.sh` attempt was interrupted while Docker
+  stalled fetching Alpine metadata (transport reported only one connection
+  allowed), before containers/tunnels were created. Offline fallback verification
+  uses existing `meldnet-integration:local` as the base, copies the final rebuilt
+  Linux arm64 CLI/daemon into task image `meldnet-dns-check:local` with
+  `docker build --network=none`, and runs the same integration script via Python
+  with only its build line omitted and image tag/cwd substituted. PASS on the
+  final run: real encrypted relay, direct primary UDP/TCP legacy AND qualified
+  names, PTR/system DNS, private NXDOMAIN/public REFUSED, original upstream
+  preservation, resolver cleanup/crash recovery and removal of both aliases on
+  revocation. The first offline attempt failed on a new test-driver empty-array
+  expansion under macOS Bash 3 with `set -u`; replaced that loop with two explicit
+  queries before the passing run. Containers/networks cleaned by the test trap;
+  task image removed afterward. This is Linux-container evidence, not iOS traffic.
+- Final `git diff --check`: PASS. No commit/push; older mobile packages remain
+  unchanged. The diagnostic questions were answered in the follow-up below.
+
+## iOS DNS routing follow-up (2026-10-17)
+
+- The user's follow-up confirms `imac.meldnet.internal` fails on iPhone while
+  the VPN IP works; both name forms resolve on desktop; iPhone displays `ready`.
+  Read-only public local API status/peers showed this Mac already connected to
+  the same network. No tunnel was started/stopped and no routes/resolver files
+  were modified. Direct `dig +time=2 +tries=1 @10.77.0.1 imac.meldnet.internal A`
+  and its `+tcp` variant both returned `10.77.0.2` from the live remote primary.
+  Direct `imac.default.meldnet.internal` returned authoritative NXDOMAIN, while
+  `dscacheutil -q host -a name` resolved both forms through macOS local DNS.
+  Thus the alias bug is confirmed on the deployed primary; primary DNS is
+  reachable from this Mac, but that does not establish the iPhone's DNS path.
+- Candidate iOS correction: on every WireGuardKit network-settings publication,
+  the production validator applies the private DNS domain and an explicit /32
+  included route to the primary resolver, preserving the broader VPN routes.
+  Only private forward/reverse matchDomains are installed; no empty match,
+  public override, public fallback or bare-name search domain is added. Settings
+  reapplication deduplicates the resolver route. This hardens resolver routing;
+  physical iPhone success is still UNVERIFIED and the root cause is not proven.
+- iOS public `dnsState` is now `configured` instead of `ready`: the saved primary
+  DNS declaration is not evidence of a successful OS lookup. Documented in
+  bridge-v1 and the iOS README. Android status behavior is unchanged.
+- Native Swift tests instantiate actual NetworkExtension settings objects and
+  exercise the production helper: primary-only resolver, domainName, forward and
+  reverse matches, /32 route, repeated publication, /16 /20 /28 pool boundaries,
+  older primary without DNS, unsafe network refusal and honest public status.
+- `make check cross mobile-ios-test`: PASS (root vet/race/format/isolation checks,
+  all desktop cross-builds, native Swift checks including DNS settings and the
+  Swift/C/Go TLS loopback tests). These are macOS-hosted tests and builds, not an
+  actual iPhone DNS or handover test.
+- Build-tool recovery complete: installed isolated official Flutter 3.47.7
+  (Dart 3.13.5) under ignored `bin/toolchains/flutter-3.47.7/flutter`; verified
+  downloaded archive SHA256 against official macOS release metadata:
+  `dd9da574c3168460550117eb0e8dd0313ae934fabf64a82a6d557fff5fd1422e`.
+  Removed the downloaded ZIP after extraction. Global Flutter install and the
+  checked-in SDK requirement and lockfile remain unchanged.
+- `/Users/marhi/meldnet/bin/toolchains/flutter-3.47.7/flutter/bin/flutter pub get --enforce-lockfile`
+  in `mobile/`: PASS. Then
+  `PATH="/Users/marhi/meldnet/bin/toolchains/flutter-3.47.7/flutter/bin:$PATH" make mobile-check mobile-ios`:
+  mobile-check PASS (no analyzer issues, all 7 Flutter tests, native Go vet/race
+  tests). Initial device build failed because Apple's callback passes base
+  NETunnelNetworkSettings but the helper takes NEPacketTunnelNetworkSettings.
+  Added an explicit checked cast, failing safely for an unexpected settings type.
+  Final same-PATH `make mobile-ios-test mobile-ios`: PASS, including the full
+  release device build with embedded PacketTunnel extension.
+- Updated `bin/Meldnet-ios-unsigned.zip`: 10,061,594 bytes; Flutter reports
+  Runner.app 24.3 MB. ZIP integrity and presence of both app and extension
+  binaries: PASS. `lipo -archs` confirms both arm64; `codesign -dv` confirms
+  app and extension are unsigned. ZIP SHA256:
+  `e96e41af7e627e4d8bd7509be5b7ec543b86fa512b5b11a561de552221f61d10`.
+  Android artifacts are unchanged. No signing, device installation, remote
+  deployment, commit or push occurred. Final `git diff --check`: PASS.
+
+The signed installation/launch is now recorded below. Next: on the iPhone,
+retest `imac.meldnet.internal`, private NXDOMAIN/public DNS and Wi-Fi/cellular
+handover. If the shorter name still fails, capture the iPhone's DNS packets and
+system resolver state; the explicit-route/domain change is a candidate fix,
+not a proven root cause. Deploy the primary alias fix via an authorized
+workflow for `imac.default.meldnet.internal`. Use the isolated Flutter PATH
+above for reproducible subsequent builds. Do not claim the iPhone issue
+resolved based on Mac DNS probes, settings-object tests or unsigned builds.
+
+## Connected iPhone installation (2026-10-17)
+
+- User explicitly connected the phone and requested running the updated app.
+  The sole connected device was the paired iPhone 15 Pro (iOS 27.0.1), with an
+  existing `si.meld.meldnet` development app build 1. No app uninstall or private
+  app/Keychain data read/export was performed.
+- Built and automatically provisioned a signed Release build for the connected
+  device, using existing valid Apple Development identity/team K74N347VA8.
+  Xcode fetched/generated app and PacketTunnel profiles as needed. Signing/team
+  overrides were command-line only; generic checked-in project signing remains
+  unchanged. App and extension both use build 2 to distinguish the candidate.
+- Exact build: isolated Flutter PATH from above, then
+  `xcodebuild -workspace mobile/ios/Runner.xcworkspace -scheme Runner -configuration Release -destination id=00008130-001A2D603C0A001C -derivedDataPath /Users/marhi/meldnet/bin/ios-device-signed -allowProvisioningUpdates -allowProvisioningDeviceRegistration DEVELOPMENT_TEAM=K74N347VA8 CODE_SIGN_STYLE=Automatic 'CODE_SIGN_IDENTITY=Apple Development' FLUTTER_BUILD_NUMBER=2 CURRENT_PROJECT_VERSION=2 build`:
+  PASS. Output/log are ignored under `bin/ios-device-signed` and
+  `bin/ios-device-signing.log`. No source changes in this installation turn.
+- `codesign --verify --deep --strict` on the signed Runner.app: PASS. Verified
+  app AND PacketTunnel profiles include this device/team; both build numbers are
+  2 and both signed entitlements contain packet-tunnel-provider plus
+  K74N347VA8.si.meld.meldnet.shared Keychain access. Existing memberships were
+  not inspected; persistence is not claimed solely from successful installation.
+- `xcrun devicectl device install app --device 658A4C6E-B31C-5722-AB9C-EAEDEDC32B08 --timeout 120 /Users/marhi/meldnet/bin/ios-device-signed/Build/Products/Release-iphoneos/Runner.app`:
+  PASS, updated existing bundle in place. Then
+  `xcrun devicectl device process launch --device 658A4C6E-B31C-5722-AB9C-EAEDEDC32B08 --timeout 30 si.meld.meldnet`:
+  PASS, iOS confirmed launch. This establishes installation/launch, not physical
+  DNS success, restored membership visibility, or a running VPN tunnel.
+- No device VPN connect/disconnect, primary deployment, or Mac networking change
+  was performed in this installation turn. Earlier unsigned ZIP remains unsigned;
+  the separately signed on-device build is under the derived-data path above.
+
+The user's successful follow-up is recorded below. Remaining acceptance includes
+private NXDOMAIN/public DNS and handover. Primary deployment remains required for
+`imac.default.meldnet.internal`.
+
+## User iPhone acceptance (2026-10-17)
+
+- After build 2 was installed/launched and the user was asked to reconnect and
+  retest `imac.meldnet.internal`, the user replied "ok works". Record the iPhone
+  candidate as working by user report. No additional test commands were run.
+- This confirms the user's reported success after the DNS routing/domain changes
+  and host-IP display update; it does not independently establish the exact root
+  cause or verify qualified aliases, NXDOMAIN packet privacy, public DNS,
+  handover, process death or background lifecycle. No primary deployment occurred.
+- Next: primary deployment for `*.default.meldnet.internal` and remaining mobile
+  lifecycle/no-leak acceptance when requested. Do not repeat the resolved
+  ordinary-name iPhone diagnosis absent a new failure report.
 
 ## Mobile implementation checkpoint (2026-10-05)
 

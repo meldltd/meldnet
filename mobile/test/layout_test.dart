@@ -57,11 +57,13 @@ void main() {
                         {
                           'name': 'studio-mac',
                           'hostname': 'studio-mac.meldnet.internal',
+                          'address': '10.77.0.3',
                           'evidence': 'handshake',
                         },
                         {
                           'name': 'home-server',
                           'hostname': 'home-server.meldnet.internal',
+                          'address': '10.77.0.4',
                           'evidence': 'stale',
                         },
                       ],

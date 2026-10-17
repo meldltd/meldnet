@@ -238,7 +238,9 @@ while paused without reconnecting. Saved auto-connect profiles start in sorted I
 order. Overlap failures stay paused; other startup failures may retry reconciliation.
 
 One private-DNS hub owns host resolver edits and the loopback aggregate authority.
-Each connected primary also serves its own VPN address. The aggregate publishes
+Each connected primary also serves its own VPN address, including both legacy
+`host.meldnet.internal` and its primary-profile-qualified
+`host.default.meldnet.internal` aliases for remote clients. The aggregate publishes
 `host.<local-profile>.meldnet.internal`; unqualified legacy aliases are exposed
 only when unique among connected profiles. All configured private reverse pools
 remain private while any managed network is connected, including disconnected

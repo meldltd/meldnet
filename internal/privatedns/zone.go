@@ -23,6 +23,7 @@ type Record struct {
 	PublicKey string `json:"public_key"`
 }
 type Settings struct {
+	Profile    string              // local profile qualifier served by a VPN authority
 	KnownPools []string            // retain private reverse-zone boundaries while another profile is active
 	Networks   map[string]Settings // local-only aggregate, never accepted over the control API
 
@@ -108,6 +109,9 @@ func makeZone(s Settings) (*zone, error) {
 		}
 		return z, nil
 	}
+	if s.Profile != "" && !validLabel(s.Profile) {
+		return nil, errors.New("invalid DNS network ID")
+	}
 	p, e := netip.ParsePrefix(s.Pool)
 	server, se := netip.ParseAddr(s.Server)
 	if e != nil || se != nil || !p.Addr().Is4() || !p.Addr().IsPrivate() || p != p.Masked() || p.Bits() < 16 || p.Bits() > 28 || !p.Contains(server) || server != p.Addr().Next() || len(s.Records) > 129 {
@@ -128,6 +132,10 @@ func makeZone(s Settings) (*zone, error) {
 			return nil, errors.New("duplicate private DNS address")
 		}
 		z.addresses[name] = ip
+		if s.Profile != "" {
+			qualified := strings.TrimSuffix(name, "."+Domain+".") + "." + s.Profile + "." + Domain + "."
+			z.addresses[qualified] = ip
+		}
 		z.allowed[ip] = true
 		reverse, _ := dns.ReverseAddr(ip.String())
 		z.reverse[reverse] = name

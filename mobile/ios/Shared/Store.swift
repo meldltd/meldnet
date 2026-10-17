@@ -62,7 +62,7 @@ struct Store {
     static func publicProfile(_ p: Profile, state: String) -> [String: Any] {
         ["id": p.id, "name": p.name, "state": p.revoked ? "revoked" : state, "autoConnect": false,
          "pending": !p.registered, "address": p.network?.ip as Any? ?? NSNull(), "error": p.error as Any? ?? NSNull(),
-         "dnsState": state == "up" && p.network?.dns != nil ? "ready" : "inactive",
+         "dnsState": state == "up" && p.network?.dns != nil ? "configured" : "inactive",
          "peers": (p.network?.members ?? []).map { m in ["name": m.name, "hostname": m.hostname ?? "", "address": m.ip,
           "evidence": m.ip == p.network?.ip ? "self" : (state == "up" ? ((p.lastControl.map { Date().timeIntervalSince($0) < 15 } ?? false) ? "control" : "stale") : "disconnected")] }]
     }

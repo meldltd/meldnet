@@ -13,7 +13,9 @@ acceptance.
 
 Requires macOS, Xcode, Flutter dependencies resolved for `mobile/`, and Go on
 PATH (the build also searches `/opt/homebrew/bin` and `/usr/local/bin`). iOS 15 is
-the deployment minimum. Desktop CGO-disabled builds are unchanged: Apple's
+the deployment minimum. Use a Flutter SDK satisfying the checked-in Dart
+`^3.13.1` requirement (Flutter 3.47.7 / Dart 3.13.5 was verified).
+Desktop CGO-disabled builds are unchanged: Apple's
 embedded WireGuard bridge necessarily uses C linkage.
 
 From the repository root:
@@ -79,10 +81,17 @@ PacketTunnel. Unsigned builds cannot be installed on an iPhone.
   registers and stops before starting WireGuard or installing VPN routes.
   Enrollment failures preserve pending identity for retry. Auto-connect and
   OS on-demand are not implemented and the bridge advertises that limitation.
-- Split DNS uses the primary VPN IP, `matchDomains` for `meldnet.internal` and
+- Split DNS uses the primary VPN IP with an explicit /32 DNS-server route,
+  `domainName` and `matchDomains` for `meldnet.internal` and
   the covering private reverse zones, and no all-domain DNS setting or public
   fallback proxy. Public DNS remains the system resolver's responsibility.
-  Profile-qualified aliases are not implemented. Reverse matching covers /24
+  DNS settings are rebuilt and validated on every WireGuardKit publication,
+  including handover; matching does not install bare-name search domains.
+  Public snapshots say `configured`, not `ready`: a stored configuration does
+  not prove a successful iPhone lookup.
+  The primary VPN authority serves its `host.default.meldnet.internal` aliases
+  as well as legacy `host.meldnet.internal` names after the primary is updated.
+  Aliases based on a mobile-local membership ID are not implemented. Reverse matching covers /24
   zones for smaller pools, so unrelated PTRs in the same /24 go to the private
   authority and may return NXDOMAIN. No host resolver files are touched.
 - `up` is an OS VPN interface status, not a reachability claim. Control evidence
@@ -95,8 +104,10 @@ PacketTunnel. Unsigned builds cannot be installed on an iPhone.
 validation, injection rejection, enrollment size limits, snapshot secret
 isolation, desktop-compatible profile ID boundaries, and native network
 validation (public/default routes, out-of-pool/broadcast IPs, duplicate members,
-endpoint credentials, and DNS escape). It touches neither Keychain nor network
-settings.
+endpoint credentials, and DNS escape). It also checks actual NetworkExtension
+settings objects for the primary host route, split forward/reverse matching,
+reapplication, older-primary compatibility and configured/inactive status.
+It touches neither Keychain nor host network settings.
 
 `mobile/ios/test-https.sh` builds the production C shim/shared Go transport and
 Swift transport adapter on macOS, then exercises real TLS 1.3 against isolated

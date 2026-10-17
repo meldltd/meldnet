@@ -58,6 +58,10 @@ for node in "$a" "$b"; do
  docker exec "$node" sh -c 'meldnet status | jq -e '\''.backend == "wireguard" and .tunnel.up and (.tunnel.peers[0].last_handshake != null)'\'' >/dev/null'
 done
 # Query authoritative DNS over both transports, and ordinary OS name resolution.
+# Mobile clients query the VPN authority, so desktop-qualified aliases must
+# resolve there as well as through a desktop local aggregate.
+test "$(docker exec "$a" dig +short +time=2 +tries=2 @10.77.0.1 server.default.meldnet.internal A)" = "10.77.0.3"
+test "$(docker exec "$a" dig +tcp +short +time=2 +tries=2 @10.77.0.1 server.default.meldnet.internal A)" = "10.77.0.3"
 test "$(docker exec "$a" dig +short +time=2 +tries=2 @10.77.0.1 server.meldnet.internal A)" = "10.77.0.3"
 test "$(docker exec "$a" dig +tcp +short +time=2 +tries=2 @10.77.0.1 server.meldnet.internal A)" = "10.77.0.3"
 test "$(docker exec "$a" dig +short +time=2 +tries=2 server.meldnet.internal A)" = "10.77.0.3"
@@ -92,5 +96,6 @@ docker exec "$a" sh -c 'meldnet status | jq -e '\''.tunnel.up == false'\'' >/dev
 if docker exec "$b" ping -c 1 -W 2 10.77.0.2 >/dev/null 2>&1; then echo 'Revoked client remains reachable';exit 1; fi
 ping_until "$b" 10.77.0.1
 docker exec "$b" dig @10.77.0.1 laptop.meldnet.internal A | grep -q NXDOMAIN
+docker exec "$b" dig @10.77.0.1 laptop.default.meldnet.internal A | grep -q NXDOMAIN
 docker exec "$a" sh -c '! grep -q "Managed by Meldnet" /etc/resolv.conf && test ! -e /var/lib/meldnet/dns-resolver.json'
 echo 'PASS: enrollment, private DNS UDP/TCP/PTR, OS resolution, upstream DNS preservation, resolver cleanup/recovery, encrypted relay, and revocation'

@@ -478,10 +478,21 @@ class _NetworkScreenState extends State<NetworkScreen>
             children: [
               Text(p.name, style: const TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(height: 5),
-              Text(
-                p.hostname.isEmpty ? p.address : p.hostname,
-                style: const TextStyle(fontSize: 12, color: Colors.black54),
-              ),
+              if (p.hostname.isNotEmpty) ...[
+                Text(
+                  p.hostname,
+                  style: const TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+                const SizedBox(height: 5),
+              ],
+              if (p.address.isNotEmpty)
+                Text(
+                  'IP · ${p.address}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF60666D),
+                  ),
+                ),
               const SizedBox(height: 5),
               Text(
                 p.label,

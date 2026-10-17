@@ -1,6 +1,34 @@
 import Foundation
+import NetworkExtension
 
 enum NetworkValidation {
+    // Called for every WireGuardKit settings publication, including handover.
+    // Give the system resolver an explicit route to its private IPv4 authority;
+    // do not rely on the broader peer route when choosing a scoped DNS path.
+    static func applyDNS(_ n: NetworkState, to settings: NEPacketTunnelNetworkSettings) throws {
+        try validate(n)
+        guard let dns = n.dns else { settings.dnsSettings = nil; return }
+        guard let ipv4 = settings.ipv4Settings else { throw OwnerError.invalid }
+        let resolver = NEDNSSettings(servers: [dns.server])
+        let fields = n.pool.split(separator: "/")
+        let octets = fields[0].split(separator: ".")
+        guard let bits = Int(fields[1]), let first = Int(octets[2]) else { throw OwnerError.invalid }
+        let zones: [String]
+        if bits == 16 { zones = ["\(octets[1]).\(octets[0]).in-addr.arpa"] }
+        else if bits < 24 {
+            zones = (first..<(first + (1 << (24-bits)))).map { "\($0).\(octets[1]).\(octets[0]).in-addr.arpa" }
+        } else { zones = ["\(octets[2]).\(octets[1]).\(octets[0]).in-addr.arpa"] }
+        resolver.domainName = dns.domain
+        resolver.matchDomains = [dns.domain] + zones
+        resolver.matchDomainsNoSearch = true
+        resolver.searchDomains = []
+        settings.dnsSettings = resolver
+        var routes = ipv4.includedRoutes ?? []
+        if !routes.contains(where: { $0.destinationAddress == dns.server && $0.destinationSubnetMask == "255.255.255.255" }) {
+            routes.append(NEIPv4Route(destinationAddress: dns.server, subnetMask: "255.255.255.255"))
+        }
+        ipv4.includedRoutes = routes
+    }
     static func contains(pool: String, address: String) -> Bool {
         let fields = pool.split(separator: "/")
         guard fields.count == 2, let bits = Int(fields[1]), (1...32).contains(bits) else { return true }

@@ -22,6 +22,7 @@ Map<String, Object?> snapshot({String? active, bool startup = false}) => {
           {
             'name': 'Desktop',
             'hostname': 'desktop.meldnet.internal',
+            'address': '10.77.0.3',
             'evidence': 'control',
           },
         ],
@@ -90,6 +91,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Tunnel interface active'), findsOneWidget);
     expect(find.text('Control-plane record'), findsOneWidget);
+    expect(find.text('desktop.meldnet.internal'), findsOneWidget);
+    expect(find.text('IP · 10.77.0.3'), findsOneWidget);
     expect(find.text('Connect at startup'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     owner.dispose();

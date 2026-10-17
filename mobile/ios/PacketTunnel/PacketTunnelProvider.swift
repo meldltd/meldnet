@@ -115,22 +115,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
     override func setTunnelNetworkSettings(_ tunnelNetworkSettings: NETunnelNetworkSettings?, completionHandler: ((Error?) -> Void)? = nil) {
-        // Split DNS: only the private forward/reverse zones use the VPN authority.
-        // An authoritative NXDOMAIN is returned by that authority; there is no proxy fallback.
-        if let settings = tunnelNetworkSettings, let n = network, let dns = n.dns {
-            let resolver = NEDNSSettings(servers: [dns.server])
-            let fields = n.pool.split(separator: "/")
-            let octets = fields[0].split(separator: ".")
-            let bits = Int(fields[1])!
-            let zones: [String]
-            if bits == 16 { zones = ["\(octets[1]).\(octets[0]).in-addr.arpa"] }
-            else if bits < 24 {
-                let first = Int(octets[2])!
-                zones = (first..<(first + (1 << (24-bits)))).map { "\($0).\(octets[1]).\(octets[0]).in-addr.arpa" }
-            } else { zones = ["\(octets[2]).\(octets[1]).\(octets[0]).in-addr.arpa"] }
-            resolver.matchDomains = [dns.domain] + zones
-            resolver.matchDomainsNoSearch = true
-            settings.dnsSettings = resolver
+        if let settings = tunnelNetworkSettings, let n = network {
+            guard let packetSettings = settings as? NEPacketTunnelNetworkSettings else {
+                completionHandler?(OwnerError.invalid); return
+            }
+            do { try NetworkValidation.applyDNS(n, to: packetSettings) }
+            catch { completionHandler?(OwnerError.invalid); return }
         }
         super.setTunnelNetworkSettings(tunnelNetworkSettings, completionHandler: completionHandler)
     }

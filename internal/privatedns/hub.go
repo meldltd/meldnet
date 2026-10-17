@@ -48,7 +48,9 @@ func (s *Slot) Configure(settings Settings) error {
 		}
 	}
 	s.settings = settings
-	if err := s.primary.Configure(settings); err != nil {
+	primarySettings := settings
+	primarySettings.Profile = s.id
+	if err := s.primary.Configure(primarySettings); err != nil {
 		return err
 	}
 	if s.active {

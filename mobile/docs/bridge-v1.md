@@ -17,7 +17,7 @@ Snapshot:
  activeId:null|"work", warning:null|"sanitized issue",
  profiles:[{id:"work",name:"phone",state:"disconnected"|"connecting"|"up"|"error"|"revoked",
  autoConnect:false,pending:false,address:null|"10.77.0.2",
- error:null|"sanitized issue",dnsState:"inactive"|"ready"|"unavailable",
+ error:null|"sanitized issue",dnsState:"inactive"|"configured"|"ready"|"unavailable",
  peers:[{name:"desktop",hostname:"desktop.meldnet.internal",address:"10.77.0.3",
  evidence:"self"|"handshake"|"control"|"stale"|"unknown"|"disconnected"}]}]}
 ```
@@ -25,3 +25,7 @@ Snapshot:
 `up` means observed tunnel interface, never peer reachability. UI maps evidence
 labels independently. No startup capability until the OS owner implements it.
 Native app/extension owns saved identities independently of Flutter lifetime.
+
+On iOS, `configured` means the primary advertised private DNS configuration; it
+is not a successful lookup or DNS reachability claim. Android retains its existing
+`ready` adapter state. Neither state proves that a peer is reachable.
